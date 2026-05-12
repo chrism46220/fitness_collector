@@ -414,6 +414,7 @@ final class HealthKitManager: ObservableObject {
 struct ContentView: View {
     @StateObject private var health = HealthKitManager()
     @State private var chartRange: ChartRange = .thirty
+    @State private var selectedWorkout: WorkoutRow?
 
     private var runs: [WorkoutRow] {
         health.workouts
@@ -466,21 +467,27 @@ struct ContentView: View {
                                 title: "Distance per Run",
                                 unit: "Miles",
                                 runs: chartRuns,
-                                value: { $0.distanceMiles }
+                                chartRange: chartRange,
+                                value: { $0.distanceMiles },
+                                onSelectWorkout: { selectedWorkout = $0 }
                             )
 
                             RunMetricChart(
                                 title: "Average Heart Rate",
                                 unit: "BPM",
                                 runs: chartRuns,
-                                value: { $0.averageHeartRate }
+                                chartRange: chartRange,
+                                value: { $0.averageHeartRate },
+                                onSelectWorkout: { selectedWorkout = $0 }
                             )
 
                             RunMetricChart(
                                 title: "Max Heart Rate",
                                 unit: "BPM",
                                 runs: chartRuns,
-                                value: { $0.maxHeartRate }
+                                chartRange: chartRange,
+                                value: { $0.maxHeartRate },
+                                onSelectWorkout: { selectedWorkout = $0 }
                             )
                         }
                     } else {
@@ -504,6 +511,15 @@ struct ContentView: View {
             .padding()
             .navigationTitle("Fitness Collector")
         }
+        .sheet(item: $selectedWorkout) { workout in
+            NavigationStack {
+                WorkoutDetailView(
+                    workout: workout.hkWorkout,
+                    summary: workout,
+                    health: health
+                )
+            }
+        }
     }
 }
 
@@ -511,57 +527,34 @@ struct RunMetricChart: View {
     let title: String
     let unit: String
     let runs: [WorkoutRow]
+    let chartRange: ChartRange
     let value: (WorkoutRow) -> Double?
+    let onSelectWorkout: (WorkoutRow) -> Void
 
     @State private var selectedDate: Date?
+
+    private let pointSpacing: CGFloat = 58
+    private let chartHeight: CGFloat = 220
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
                 .font(.headline)
 
-            Chart {
-                ForEach(runs) { run in
-                    if let y = value(run) {
-                        LineMark(
-                            x: .value("Date", run.start),
-                            y: .value(unit, y)
-                        )
-                        .interpolationMethod(.catmullRom)
-
-                        PointMark(
-                            x: .value("Date", run.start),
-                            y: .value(unit, y)
-                        )
-                    }
-                }
-
-                if let selectedDate {
-                    RuleMark(x: .value("Selected", selectedDate))
-                        .foregroundStyle(.gray)
-                }
-            }
-            .chartOverlay { proxy in
-                GeometryReader { geo in
-                    Rectangle()
-                        .fill(.clear)
-                        .contentShape(Rectangle())
-                        .gesture(
-                            DragGesture(minimumDistance: 0)
-                                .onChanged { value in
-                                    guard let plotFrame = proxy.plotFrame else {
-                                        return
-                                    }
-
-                                    let x = value.location.x - geo[plotFrame].origin.x
-                                    if let date: Date = proxy.value(atX: x) {
-                                        selectedDate = date
-                                    }
-                                }
+            GeometryReader { geometry in
+                ScrollView(.horizontal, showsIndicators: true) {
+                    chartBody(width: chartWidth(containerWidth: geometry.size.width))
+                        .frame(
+                            width: chartWidth(containerWidth: geometry.size.width),
+                            height: chartHeight
                         )
                 }
             }
-            .frame(height: 220)
+            .frame(height: chartHeight + 12)
+
+            Text("Drag sideways to scroll · Tap a point for details")
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
             if let selectedDate,
                let closest = closestRun(to: selectedDate) {
@@ -594,6 +587,87 @@ struct RunMetricChart: View {
             }
         }
         .padding(.vertical, 8)
+    }
+
+    private func chartBody(width: CGFloat) -> some View {
+        Chart {
+            ForEach(runs) { run in
+                if let y = value(run) {
+                    LineMark(
+                        x: .value("Date", run.start),
+                        y: .value(unit, y)
+                    )
+                    .interpolationMethod(.catmullRom)
+
+                    PointMark(
+                        x: .value("Date", run.start),
+                        y: .value(unit, y)
+                    )
+                }
+            }
+
+            if let selectedDate,
+               let selected = closestRun(to: selectedDate),
+               let y = value(selected) {
+                PointMark(
+                    x: .value("Selected Date", selected.start),
+                    y: .value(unit, y)
+                )
+                .symbolSize(120)
+            }
+        }
+        .chartOverlay { proxy in
+            GeometryReader { geo in
+                Rectangle()
+                    .fill(.clear)
+                    .contentShape(Rectangle())
+                    .simultaneousGesture(
+                        SpatialTapGesture()
+                            .onEnded { tap in
+                                guard let plotFrame = proxy.plotFrame else { return }
+
+                                let x = tap.location.x - geo[plotFrame].origin.x
+
+                                if let date: Date = proxy.value(atX: x),
+                                   let closest = closestRun(to: date) {
+                                    selectedDate = closest.start
+                                    onSelectWorkout(closest)
+                                }
+                            }
+                    )
+            }
+        }
+        .chartXAxis {
+            if chartRange == .all {
+                AxisMarks(values: .stride(by: .month, count: 1)) { value in
+                    AxisGridLine()
+                    AxisTick()
+
+                    if let date = value.as(Date.self) {
+                        let month = Calendar.current.component(.month, from: date)
+
+                        AxisValueLabel {
+                            VStack(spacing: 2) {
+                                Text(date.formatted(.dateTime.month(.abbreviated)))
+
+                                if month == 1 {
+                                    Text(date.formatted(.dateTime.year()))
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                AxisMarks()
+            }
+        }
+    }
+
+    private func chartWidth(containerWidth: CGFloat) -> CGFloat {
+        let calculated = CGFloat(max(runs.count, 1)) * pointSpacing
+        return max(containerWidth, calculated)
     }
 
     private func closestRun(to date: Date) -> WorkoutRow? {
@@ -729,7 +803,7 @@ struct WorkoutDetailView: View {
                     Text(health.paceDetailMessage)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-//************************************************************************************
+
                     if !health.paceSamples.isEmpty {
 
                         let paces = health.paceSamples.map { $0.paceMinutesPerMile }
@@ -749,7 +823,7 @@ struct WorkoutDetailView: View {
                         .chartXAxisLabel("Minutes")
                         .chartYAxisLabel("Pace (min/mi)")
                         .chartYScale(domain: minPace...maxPace)
-                    }  //******************************************************************************
+                    }
                 }
 
                 Divider()
