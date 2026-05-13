@@ -630,6 +630,10 @@ struct RunMetricChart: View {
 
                                 if let date: Date = proxy.value(atX: x),
                                    let closest = closestRun(to: date) {
+                                    let generator = UIImpactFeedbackGenerator(style: .light)
+                                    generator.prepare()
+                                    generator.impactOccurred()
+
                                     selectedDate = closest.start
                                     onSelectWorkout(closest)
                                 }
