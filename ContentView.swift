@@ -395,7 +395,7 @@ final class HealthKitManager: ObservableObject {
         // average makes the chart readable while preserving real slowdowns/stops.
         guard samples.count >= 15 else { return samples }
 
-        let halfWindow = 8   // about 15–20 seconds for typical Apple Watch route data
+        let halfWindow = 20   // about 15–20 seconds for typical Apple Watch route data
 
         return samples.enumerated().map { index, sample in
             let start = max(0, index - halfWindow)
@@ -443,7 +443,14 @@ struct ContentView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 16) {
+            VStack(spacing: 12) {
+
+                Text("Fitness Collector")
+                    .font(.largeTitle)
+                    .fontWeight(.bold)
+                    .frame(maxWidth: .infinity)
+                    .multilineTextAlignment(.center)
+                    .padding(.top, 8)
 
                 Text(health.statusMessage)
                     .font(.headline)
@@ -462,7 +469,7 @@ struct ContentView: View {
                                 }
                             }
                             .pickerStyle(.segmented)
-
+                            
                             RunMetricChart(
                                 title: "Distance per Run",
                                 unit: "Miles",
@@ -471,7 +478,7 @@ struct ContentView: View {
                                 value: { $0.distanceMiles },
                                 onSelectWorkout: { selectedWorkout = $0 }
                             )
-
+                            
                             RunMetricChart(
                                 title: "Average Heart Rate",
                                 unit: "BPM",
@@ -480,7 +487,7 @@ struct ContentView: View {
                                 value: { $0.averageHeartRate },
                                 onSelectWorkout: { selectedWorkout = $0 }
                             )
-
+                            
                             RunMetricChart(
                                 title: "Max Heart Rate",
                                 unit: "BPM",
@@ -496,7 +503,7 @@ struct ContentView: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
-
+                    
                     Section("Workouts") {
                         ForEach(health.workouts) { workout in
                             NavigationLink {
@@ -508,8 +515,8 @@ struct ContentView: View {
                     }
                 }
             }
-            .padding()
-            .navigationTitle("Fitness Collector")
+            .padding(.horizontal)
+            .toolbar(.hidden, for: .navigationBar)
         }
         .sheet(item: $selectedWorkout) { workout in
             NavigationStack {
@@ -532,27 +539,72 @@ struct RunMetricChart: View {
     let onSelectWorkout: (WorkoutRow) -> Void
 
     @State private var selectedDate: Date?
+    @State private var isScrollEnabled: Bool = false
 
     private let pointSpacing: CGFloat = 58
     private let chartHeight: CGFloat = 220
+    private let yAxisWidth: CGFloat = 42
+    private let yAxisSpacing: CGFloat = 6
+    private let yAxisTickCount = 4
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.headline)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(title)
+                        .font(.headline)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
 
-            GeometryReader { geometry in
-                ScrollView(.horizontal, showsIndicators: true) {
-                    chartBody(width: chartWidth(containerWidth: geometry.size.width))
-                        .frame(
-                            width: chartWidth(containerWidth: geometry.size.width),
-                            height: chartHeight
-                        )
+                    Text(unit.uppercased())
+                        .font(.caption2)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(Color(.secondarySystemBackground))
+                        .clipShape(Capsule())
+                }
+
+                HStack {
+                    Spacer()
+
+                    Picker("Scroll", selection: $isScrollEnabled) {
+                        Text("Scroll Off").tag(false)
+                        Text("Scroll On").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 168)
                 }
             }
-            .frame(height: chartHeight + 12)
 
-            Text("Drag sideways to scroll · Tap a point for details")
+            GeometryReader { geometry in
+                let availablePlotWidth = max(1, geometry.size.width - yAxisWidth - yAxisSpacing)
+                let plotWidth = chartWidth(containerWidth: availablePlotWidth)
+
+                HStack(alignment: .top, spacing: yAxisSpacing) {
+                    yAxisColumn()
+
+                    if isScrollEnabled {
+                        ScrollView(.horizontal, showsIndicators: true) {
+                            chartBody(width: plotWidth)
+                                .frame(
+                                    width: plotWidth,
+                                    height: chartHeight
+                                )
+                        }
+                    } else {
+                        chartBody(width: availablePlotWidth)
+                            .frame(
+                                width: availablePlotWidth,
+                                height: chartHeight
+                            )
+                    }
+                }
+            }
+            .frame(height: chartHeight + 20)
+
+            Text(isScrollEnabled ? "Scroll to explore · Tap a run" : "Full range shown · Tap a run")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -587,6 +639,71 @@ struct RunMetricChart: View {
             }
         }
         .padding(.vertical, 8)
+    }
+
+    private func yAxisColumn() -> some View {
+        let ticks = yAxisTickValues().reversed()
+
+        return VStack(spacing: 0) {
+            ForEach(Array(ticks.enumerated()), id: \.element) { index, tick in
+                Text(formatAxisTick(tick))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+
+                if index < yAxisTickCount - 1 {
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+        .frame(width: yAxisWidth, height: chartHeight)
+        // These roughly match Swift Charts' internal plot-area inset so the
+        // fixed labels line up with the visible horizontal gridlines.
+        .padding(.top, 8)
+        .padding(.bottom, 30)
+    }
+
+    private func yDomain() -> ClosedRange<Double> {
+        let values = runs.compactMap(value).filter { $0.isFinite }
+
+        guard let minValue = values.min(),
+              let maxValue = values.max() else {
+            return 0...1
+        }
+
+        let range = maxValue - minValue
+        let padding = max(range * 0.15, max(abs(maxValue) * 0.05, 1.0))
+        let lower = max(0, minValue - padding)
+        let upper = maxValue + padding
+
+        if lower >= upper {
+            return max(0, lower - 1)...(upper + 1)
+        }
+
+        return lower...upper
+    }
+
+    private func yAxisTickValues() -> [Double] {
+        let domain = yDomain()
+        let lower = domain.lowerBound
+        let upper = domain.upperBound
+
+        guard yAxisTickCount > 1 else { return [lower] }
+
+        let step = (upper - lower) / Double(yAxisTickCount - 1)
+        return (0..<yAxisTickCount).map { lower + Double($0) * step }
+    }
+
+    private func formatAxisTick(_ value: Double) -> String {
+        if unit.lowercased().contains("bpm") {
+            return String(format: "%.0f", value)
+        }
+
+        if unit.lowercased().contains("mile") {
+            return String(format: "%.1f", value)
+        }
+
+        return String(format: "%.0f", value)
     }
 
     private func chartBody(width: CGFloat) -> some View {
@@ -641,6 +758,12 @@ struct RunMetricChart: View {
                     )
             }
         }
+        .chartYScale(domain: yDomain())
+        .chartYAxis {
+            AxisMarks(position: .leading, values: yAxisTickValues()) { _ in
+                AxisGridLine()
+            }
+        }
         .chartXAxis {
             if chartRange == .all {
                 AxisMarks(values: .stride(by: .month, count: 1)) { value in
@@ -670,6 +793,8 @@ struct RunMetricChart: View {
     }
 
     private func chartWidth(containerWidth: CGFloat) -> CGFloat {
+        guard isScrollEnabled else { return containerWidth }
+
         let calculated = CGFloat(max(runs.count, 1)) * pointSpacing
         return max(containerWidth, calculated)
     }
@@ -810,12 +935,6 @@ struct WorkoutDetailView: View {
 
                     if !health.paceSamples.isEmpty {
 
-                        let paces = health.paceSamples.map { $0.paceMinutesPerMile }
-                        let filtered = paces.filter { $0 >= 6 && $0 <= 16 }
-
-                        let minPace = (filtered.min() ?? 8) - 0.5
-                        let maxPace = (filtered.max() ?? 14) + 0.5
-
                         Chart(health.paceSamples) { sample in
                             LineMark(
                                 x: .value("Minutes", sample.minutesFromStart),
@@ -826,7 +945,7 @@ struct WorkoutDetailView: View {
                         .frame(height: 260)
                         .chartXAxisLabel("Minutes")
                         .chartYAxisLabel("Pace (min/mi)")
-                        .chartYScale(domain: minPace...maxPace)
+                        .chartYScale(domain: paceYAxisDomain(health.paceSamples))
                     }
                 }
 
@@ -898,26 +1017,17 @@ struct WorkoutDetailView: View {
     }
 }
 
-private func paceYAxisDomain(_ samples: [PaceSample]) -> ClosedRange<Double> {
-    let paces = samples
-        .map { $0.paceMinutesPerMile }
-        .filter { $0.isFinite }
-        .sorted()
-
-    guard !paces.isEmpty else { return 8.0...14.0 }
-
-    // Use percentile trimming so one weird GPS point does not stretch the axis.
-    let lowIndex = max(0, Int(Double(paces.count - 1) * 0.05))
-    let highIndex = min(paces.count - 1, Int(Double(paces.count - 1) * 0.95))
-
-    let low = max(4.0, paces[lowIndex] - 0.5)
-    let high = min(20.0, paces[highIndex] + 0.5)
-
-    if low >= high {
-        return max(4.0, low - 1.0)...min(20.0, high + 1.0)
+func paceYAxisDomain(_ samples: [PaceSample]) -> ClosedRange<Double> {
+    let paces = samples.map { $0.paceMinutesPerMile }
+    guard let min = paces.min(),
+          let max = paces.max() else {
+        return 8...16
     }
 
-    return low...high
+    // Add padding
+    let padding: Double = 0.8   // 👈 tweak this (0.5–1.5 is sweet spot)
+
+    return (min - padding)...(max + padding)
 }
 
 private func formatPace(_ seconds: Double) -> String {
@@ -965,4 +1075,6 @@ extension HKWorkoutActivityType {
         }
     }
 }
+
+
 
