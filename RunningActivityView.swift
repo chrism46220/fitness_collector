@@ -51,6 +51,15 @@ struct WorkoutRow: Identifiable {
 final class HealthKitManager: ObservableObject {
     private let healthStore = HKHealthStore()
 
+    /// Limit passed to the workout sample query.
+    ///
+    /// Earlier builds passed a hard-coded 100, which silently capped history at
+    /// the most recent 100 workouts and under-reported overview totals and
+    /// category counts. `HKObjectQueryNoLimit` returns the complete workout
+    /// history. Kept as a named constant rather than an inline literal so the
+    /// regression tests can assert the query is unbounded.
+    static let workoutQueryLimit = HKObjectQueryNoLimit
+
     @Published var workouts: [WorkoutRow] = []
     @Published var statusMessage: String = "Not connected"
 
@@ -112,7 +121,7 @@ final class HealthKitManager: ObservableObject {
         let query = HKSampleQuery(
             sampleType: .workoutType(),
             predicate: nil,
-            limit: 100,
+            limit: HealthKitManager.workoutQueryLimit,
             sortDescriptors: [
                 NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)
             ]
@@ -129,7 +138,12 @@ final class HealthKitManager: ObservableObject {
                     return
                 }
 
+                // An empty result is a valid state for a user with no recorded
+                // workouts. Clear the published list so stale rows never linger
+                // behind an "empty" message, and let the overview render its
+                // empty state from the now-empty workout array.
                 if hkWorkouts.isEmpty {
+                    self?.workouts = []
                     self?.statusMessage = "No workouts returned from HealthKit"
                     return
                 }
