@@ -27,13 +27,20 @@ struct PaceSample: Identifiable {
 struct WorkoutRow: Identifiable {
     let id: UUID
     let hkWorkout: HKWorkout
-    let type: String
+    /// The raw HealthKit activity type. This is the source of truth.
+    let activityType: HKWorkoutActivityType
     let start: Date
     let durationMinutes: Double
     let calories: Double?
     let distanceMiles: Double?
     let averageHeartRate: Double?
     let maxHeartRate: Double?
+
+    /// Display label for the activity type.
+    var type: String { activityType.displayName }
+
+    /// The app-level category this workout belongs to.
+    var category: ActivityCategory { activityType.category }
 
     var averagePaceSecondsPerMile: Double? {
         guard let distanceMiles, distanceMiles > 0 else { return nil }
@@ -59,13 +66,28 @@ final class HealthKitManager: ObservableObject {
             return
         }
 
-        let readTypes: Set<HKObjectType> = [
+        var readTypes: Set<HKObjectType> = [
             HKObjectType.workoutType(),
             HKQuantityType.quantityType(forIdentifier: .heartRate)!,
             HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned)!,
             HKQuantityType.quantityType(forIdentifier: .distanceWalkingRunning)!,
             HKSeriesType.workoutRoute()
         ]
+
+        // Lifting and other activities report effort via basal energy and may
+        // record the now-deprecated total energy burned. Distance for cycling
+        // and similar sports is a separate HealthKit type from walking/running.
+        for identifier: HKQuantityTypeIdentifier in [
+            .basalEnergyBurned,
+            .distanceCycling,
+            .distanceSwimming,
+            .distanceWheelchair,
+            .distanceDownhillSnowSports
+        ] {
+            if let type = HKQuantityType.quantityType(forIdentifier: identifier) {
+                readTypes.insert(type)
+            }
+        }
 
         healthStore.requestAuthorization(toShare: [], read: readTypes) { [weak self] success, error in
             DispatchQueue.main.async {
@@ -118,7 +140,7 @@ final class HealthKitManager: ObservableObject {
                     WorkoutRow(
                         id: workout.uuid,
                         hkWorkout: workout,
-                        type: workout.workoutActivityType.displayName,
+                        activityType: workout.workoutActivityType,
                         start: workout.startDate,
                         durationMinutes: workout.duration / 60.0,
                         calories: workout
@@ -186,7 +208,7 @@ final class HealthKitManager: ObservableObject {
                         self.workouts[index] = WorkoutRow(
                             id: old.id,
                             hkWorkout: old.hkWorkout,
-                            type: old.type,
+                            activityType: old.activityType,
                             start: old.start,
                             durationMinutes: old.durationMinutes,
                             calories: old.calories,
@@ -398,14 +420,14 @@ final class HealthKitManager: ObservableObject {
     }
 }
 
-struct ContentView: View {
-    @StateObject private var health = HealthKitManager()
+struct RunningActivityView: View {
+    @ObservedObject var health: HealthKitManager
     @State private var chartRange: ChartRange = .thirty
     @State private var selectedWorkout: WorkoutRow?
 
     private var runs: [WorkoutRow] {
         health.workouts
-            .filter { $0.type == "Running" }
+            .filter { $0.category == .running }
             .sorted { $0.start < $1.start }
     }
 
@@ -429,25 +451,17 @@ struct ContentView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 12) {
-
-                Text("Fitness Collector")
-                    .font(.largeTitle)
-                    .fontWeight(.bold)
-                    .frame(maxWidth: .infinity)
-                    .multilineTextAlignment(.center)
-                    .padding(.top, 8)
-
+        VStack(spacing: 0) {
+            if health.statusMessage != "Not connected" {
                 Text(health.statusMessage)
-                    .font(.headline)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal)
+                    .padding(.bottom, 6)
+            }
 
-                Button("Connect to Apple Health") {
-                    health.requestAccessAndLoadWorkouts()
-                }
-                .buttonStyle(.borderedProminent)
-
-                List {
+            List {
                     if !runs.isEmpty {
                         Section("Run Trends") {
                             Picker("Range", selection: $chartRange) {
@@ -492,7 +506,7 @@ struct ContentView: View {
                     }
                     
                     Section("Workouts") {
-                        ForEach(health.workouts) { workout in
+                        ForEach(runs.reversed()) { workout in
                             NavigationLink {
                                 WorkoutDetailView(workout: workout.hkWorkout, summary: workout, health: health)
                             } label: {
@@ -500,10 +514,7 @@ struct ContentView: View {
                             }
                         }
                     }
-                }
             }
-            .padding(.horizontal)
-            .toolbar(.hidden, for: .navigationBar)
         }
         .sheet(item: $selectedWorkout) { workout in
             NavigationStack {
@@ -994,33 +1005,33 @@ func paceYAxisDomain(_ samples: [PaceSample]) -> ClosedRange<Double> {
     return (min - padding)...(max + padding)
 }
 
-private func formatPace(_ seconds: Double) -> String {
+func formatPace(_ seconds: Double) -> String {
     let total = Int(seconds.rounded())
     let min = total / 60
     let sec = total % 60
     return "\(min):\(String(format: "%02d", sec))"
 }
 
-private func formatPaceMinutes(_ minutesPerMile: Double) -> String {
+func formatPaceMinutes(_ minutesPerMile: Double) -> String {
     let totalSeconds = Int((minutesPerMile * 60.0).rounded())
     let min = totalSeconds / 60
     let sec = totalSeconds % 60
     return "\(min):\(String(format: "%02d", sec))"
 }
 
-private func formatDistance(_ miles: Double) -> String {
+func formatDistance(_ miles: Double) -> String {
     String(format: "%.2f", miles)
 }
 
-private func formatDuration(_ minutes: Double) -> String {
+func formatDuration(_ minutes: Double) -> String {
     String(format: "%.1f", minutes)
 }
 
-private func formatCalories(_ calories: Double) -> String {
+func formatCalories(_ calories: Double) -> String {
     String(format: "%.0f", calories)
 }
 
-private func formatHeartRate(_ bpm: Double) -> String {
+func formatHeartRate(_ bpm: Double) -> String {
     String(format: "%.0f", bpm)
 }
 

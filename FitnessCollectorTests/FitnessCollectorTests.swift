@@ -116,7 +116,7 @@ final class ChartGeometryTests: XCTestCase {
         return WorkoutRow(
             id: UUID(),
             hkWorkout: workout,
-            type: "Running",
+            activityType: .running,
             start: start,
             durationMinutes: 30,
             calories: nil,
