@@ -390,24 +390,11 @@ final class HealthKitManager: ObservableObject {
         healthStore.execute(routeQuery)
     }
 
-    private func smoothPaceSamples(_ samples: [PaceSample]) -> [PaceSample] {
-        // GPS-derived instantaneous pace is naturally noisy. A centered rolling
+    func smoothPaceSamples(_ samples: [PaceSample]) -> [PaceSample] {
+        // GPS-derived instantaneous pace is naturally noisy. A centred rolling
         // average makes the chart readable while preserving real slowdowns/stops.
-        guard samples.count >= 15 else { return samples }
-
-        let halfWindow = 20   // about 15–20 seconds for typical Apple Watch route data
-
-        return samples.enumerated().map { index, sample in
-            let start = max(0, index - halfWindow)
-            let end = min(samples.count - 1, index + halfWindow)
-            let window = samples[start...end]
-            let average = window.map { $0.paceMinutesPerMile }.reduce(0, +) / Double(window.count)
-
-            return PaceSample(
-                minutesFromStart: sample.minutesFromStart,
-                paceMinutesPerMile: average
-            )
-        }
+        // Implementation lives in PaceSmoothing so it can be unit tested.
+        PaceSmoothing.smooth(samples)
     }
 }
 
@@ -663,35 +650,14 @@ struct RunMetricChart: View {
         .padding(.bottom, 30)
     }
 
-    private func yDomain() -> ClosedRange<Double> {
-        let values = runs.compactMap(value).filter { $0.isFinite }
-
-        guard let minValue = values.min(),
-              let maxValue = values.max() else {
-            return 0...1
-        }
-
-        let range = maxValue - minValue
-        let padding = max(range * 0.15, max(abs(maxValue) * 0.05, 1.0))
-        let lower = max(0, minValue - padding)
-        let upper = maxValue + padding
-
-        if lower >= upper {
-            return max(0, lower - 1)...(upper + 1)
-        }
-
-        return lower...upper
+    func yDomain() -> ClosedRange<Double> {
+        // Implementation lives in ChartGeometry so it can be unit tested.
+        ChartGeometry.yDomain(runs, value: value)
     }
 
-    private func yAxisTickValues() -> [Double] {
-        let domain = yDomain()
-        let lower = domain.lowerBound
-        let upper = domain.upperBound
-
-        guard yAxisTickCount > 1 else { return [lower] }
-
-        let step = (upper - lower) / Double(yAxisTickCount - 1)
-        return (0..<yAxisTickCount).map { lower + Double($0) * step }
+    func yAxisTickValues(tickCount: Int? = nil) -> [Double] {
+        // Implementation lives in ChartGeometry so it can be unit tested.
+        ChartGeometry.tickValues(in: yDomain(), tickCount: tickCount ?? self.yAxisTickCount)
     }
 
     private func formatAxisTick(_ value: Double) -> String {
@@ -799,11 +765,9 @@ struct RunMetricChart: View {
         return max(containerWidth, calculated)
     }
 
-    private func closestRun(to date: Date) -> WorkoutRow? {
-        runs.min(by: {
-            abs($0.start.timeIntervalSince(date)) <
-            abs($1.start.timeIntervalSince(date))
-        })
+    func closestRun(to date: Date) -> WorkoutRow? {
+        // Implementation lives in ChartGeometry so it can be unit tested.
+        ChartGeometry.closestItem(to: date, in: runs, timestamp: \.start)
     }
 
     private func formatValue(_ value: Double) -> String {
