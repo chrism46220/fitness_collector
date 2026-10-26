@@ -96,6 +96,23 @@ final class HealthKitManager: ObservableObject {
         return "Apple Health returned an error. Try again, or check Health access in Settings."
     }
 
+    /// Maps a query failure to copy that is safe to display for a missing-data case.
+    ///
+    /// HealthKit reports `HKError.noData` ("No data available for the specified
+    /// predicate") whenever a predicate simply matches nothing - a run recorded
+    /// without a watch, a workout with no GPS route. That is an ordinary empty
+    /// result, not a fault, and must never be surfaced as raw error text. Any
+    /// other failure keeps a generic, actionable message. The underlying
+    /// description is kept in `diagnosticMessage` for debugging.
+    static func emptyStateMessage(for error: Error) -> String {
+        let nsError = error as NSError
+        if nsError.domain == HKError.errorDomain,
+           nsError.code == HKError.Code.errorNoData.rawValue {
+            return "No data recorded for this workout"
+        }
+        return "Apple Health could not return this data. Try again, or check Health access in Settings."
+    }
+
     func requestAccessAndLoadWorkouts() {
         guard HKHealthStore.isHealthDataAvailable() else {
             statusMessage = "Health data is not available on this device."
@@ -326,15 +343,17 @@ final class HealthKitManager: ObservableObject {
 
             if let error = error {
                 DispatchQueue.main.async {
-                    self?.heartRateDetailMessage = "HR sample error: \(error.localizedDescription)"
                     self?.heartRateSamples = []
+                    self?.heartRateDetailMessage = HealthKitManager.emptyStateMessage(for: error)
+                    self?.diagnosticMessage = self?.diagnosticMessage
+                        ?? "Heart rate samples: \(error.localizedDescription)"
                 }
                 return
             }
 
             guard let samples = samples as? [HKQuantitySample] else {
                 DispatchQueue.main.async {
-                    self?.heartRateDetailMessage = "No HR samples returned"
+                    self?.heartRateDetailMessage = "No heart rate data for this workout"
                     self?.heartRateSamples = []
                 }
                 return
@@ -379,8 +398,10 @@ final class HealthKitManager: ObservableObject {
 
             if let error = error {
                 DispatchQueue.main.async {
-                    self?.paceDetailMessage = "Route error: \(error.localizedDescription)"
                     self?.paceSamples = []
+                    self?.paceDetailMessage = HealthKitManager.emptyStateMessage(for: error)
+                    self?.diagnosticMessage = self?.diagnosticMessage
+                        ?? "Workout route: \(error.localizedDescription)"
                 }
                 return
             }
@@ -402,7 +423,8 @@ final class HealthKitManager: ObservableObject {
                 let locationQuery = HKWorkoutRouteQuery(route: route) { _, locations, done, error in
                     if let error = error {
                         DispatchQueue.main.async {
-                            self?.paceDetailMessage = "Location error: \(error.localizedDescription)"
+                            self?.diagnosticMessage = self?.diagnosticMessage
+                                ?? "Route locations: \(error.localizedDescription)"
                         }
                     }
 
