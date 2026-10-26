@@ -61,7 +61,19 @@ final class HealthKitManager: ObservableObject {
     static let workoutQueryLimit = HKObjectQueryNoLimit
 
     @Published var workouts: [WorkoutRow] = []
+    /// Human-facing status copy. This is the only string the UI displays, so it
+    /// must never carry raw `NSError`/`localizedDescription` text.
     @Published var statusMessage: String = "Not connected"
+
+    /// Diagnostic detail for the most recent failure, if any. Raw HealthKit
+    /// error text belongs here rather than in `statusMessage`; the UI shows it
+    /// behind a disclosure so a query failure never masquerades as user guidance.
+    @Published var diagnosticMessage: String?
+
+    /// True once authorization has been requested and completed successfully.
+    /// Distinguishes "never connected" from "connected but no workouts", which
+    /// need different empty-state copy.
+    @Published var hasRequestedAccess: Bool = false
 
     @Published var heartRateSamples: [HeartRateSample] = []
     @Published var heartRateDetailMessage: String = ""
@@ -69,25 +81,41 @@ final class HealthKitManager: ObservableObject {
     @Published var paceSamples: [PaceSample] = []
     @Published var paceDetailMessage: String = ""
 
+    /// Turns a raw HealthKit error into copy that is safe to show a person.
+    ///
+    /// HealthKit surfaces `"No data available for the specified predicate"` for
+    /// several underlying conditions (unavailable sample type, unresolved
+    /// authorization, or a genuinely empty range), so the raw description is not
+    /// meaningful to a user. The underlying description is kept in
+    /// `diagnosticMessage` for debugging.
+    static func userFacingMessage(for error: Error) -> String {
+        let nsError = error as NSError
+        if nsError.domain == HKError.errorDomain {
+            return "Apple Health could not return this data. Try again, or check Health access in Settings."
+        }
+        return "Apple Health returned an error. Try again, or check Health access in Settings."
+    }
+
     func requestAccessAndLoadWorkouts() {
         guard HKHealthStore.isHealthDataAvailable() else {
-            statusMessage = "Health data not available."
+            statusMessage = "Health data is not available on this device."
+            diagnosticMessage = nil
             return
         }
 
         var readTypes: Set<HKObjectType> = [
             HKObjectType.workoutType(),
-            HKQuantityType.quantityType(forIdentifier: .heartRate)!,
-            HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned)!,
-            HKQuantityType.quantityType(forIdentifier: .distanceWalkingRunning)!,
             HKSeriesType.workoutRoute()
         ]
 
-        // Lifting and other activities report effort via basal energy and may
-        // record the now-deprecated total energy burned. Distance for cycling
-        // and similar sports is a separate HealthKit type from walking/running.
+        // Optional quantity types are added only when the device reports them.
+        // Force-unwrapping these identifiers crashes or silently misbehaves on
+        // devices/OS versions where a type is unavailable.
         for identifier: HKQuantityTypeIdentifier in [
+            .heartRate,
+            .activeEnergyBurned,
             .basalEnergyBurned,
+            .distanceWalkingRunning,
             .distanceCycling,
             .distanceSwimming,
             .distanceWheelchair,
@@ -98,18 +126,26 @@ final class HealthKitManager: ObservableObject {
             }
         }
 
+        diagnosticMessage = nil
+        statusMessage = "Requesting Health access..."
+
         healthStore.requestAuthorization(toShare: [], read: readTypes) { [weak self] success, error in
             DispatchQueue.main.async {
+                guard let self = self else { return }
+
                 if let error = error {
-                    self?.statusMessage = "Auth error: \(error.localizedDescription)"
+                    self.hasRequestedAccess = true
+                    self.diagnosticMessage = error.localizedDescription
+                    self.statusMessage = "Apple Health access failed. Tap to try again."
                     return
                 }
 
+                self.hasRequestedAccess = true
+
                 if success {
-                    self?.statusMessage = "Health access granted. Loading workouts..."
-                    self?.loadWorkouts()
+                    self.loadWorkouts()
                 } else {
-                    self?.statusMessage = "Access denied"
+                    self.statusMessage = "Health access was not granted."
                 }
             }
         }
@@ -128,29 +164,39 @@ final class HealthKitManager: ObservableObject {
         ) { [weak self] _, samples, error in
 
             DispatchQueue.main.async {
+                guard let self = self else { return }
+
+                // A nil sample array is a query failure, not an empty library.
+                // Handle it before the type cast so the distinction survives.
                 if let error = error {
-                    self?.statusMessage = "Workout query error: \(error.localizedDescription)"
+                    self.diagnosticMessage = error.localizedDescription
+                    self.statusMessage = HealthKitManager.userFacingMessage(for: error)
+                    self.workouts = []
                     return
                 }
 
                 guard let hkWorkouts = samples as? [HKWorkout] else {
-                    self?.statusMessage = "Samples were not workouts"
+                    self.workouts = []
+                    self.statusMessage = "Apple Health did not return workout data."
+                    self.diagnosticMessage = "HKSampleQuery returned a non-workout sample array."
                     return
                 }
+
+                self.diagnosticMessage = nil
 
                 // An empty result is a valid state for a user with no recorded
                 // workouts. Clear the published list so stale rows never linger
                 // behind an "empty" message, and let the overview render its
                 // empty state from the now-empty workout array.
                 if hkWorkouts.isEmpty {
-                    self?.workouts = []
-                    self?.statusMessage = "No workouts returned from HealthKit"
+                    self.workouts = []
+                    self.statusMessage = "No workouts found in Apple Health yet."
                     return
                 }
 
                 let energyType = HKQuantityType(.activeEnergyBurned)
 
-                self?.workouts = hkWorkouts.map { workout in
+                self.workouts = hkWorkouts.map { workout in
                     WorkoutRow(
                         id: workout.uuid,
                         hkWorkout: workout,
@@ -168,9 +214,10 @@ final class HealthKitManager: ObservableObject {
                 }
 
                 let runCount = hkWorkouts.filter { $0.workoutActivityType == .running }.count
-                self?.statusMessage = "Loaded \(hkWorkouts.count) workouts, \(runCount) runs"
+                self.statusMessage = "Loaded \(hkWorkouts.count) workouts (\(runCount) running)."
+                self.diagnosticMessage = nil
 
-                self?.fetchHeartRates(for: hkWorkouts)
+                self.fetchHeartRates(for: hkWorkouts)
             }
         }
 
@@ -179,7 +226,8 @@ final class HealthKitManager: ObservableObject {
 
     private func fetchHeartRates(for hkWorkouts: [HKWorkout]) {
         guard let hrType = HKQuantityType.quantityType(forIdentifier: .heartRate) else {
-            statusMessage = "Heart rate type unavailable"
+            // Heart-rate enrichment is optional. A missing type must not
+            // overwrite the workout list's status copy with an internal error.
             return
         }
 
@@ -197,8 +245,14 @@ final class HealthKitManager: ObservableObject {
             ) { [weak self] _, stats, error in
 
                 if let error = error {
+                    // Per-workout statistics failures are common for individual
+                    // workouts (no HR samples recorded) and are not actionable
+                    // for the user. Record the first one for diagnostics only.
                     DispatchQueue.main.async {
-                        self?.statusMessage = "HR error: \(error.localizedDescription)"
+                        guard let self = self else { return }
+                        if self.diagnosticMessage == nil {
+                            self.diagnosticMessage = "Heart rate statistics: \(error.localizedDescription)"
+                        }
                     }
                     return
                 }

@@ -37,17 +37,9 @@ struct FitnessOverviewView: View {
 
                 if allWorkouts.isEmpty {
                     Section {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text(health.statusMessage)
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-
-                            Button("Connect to Apple Health") {
-                                health.requestAccessAndLoadWorkouts()
-                            }
-                            .buttonStyle(.borderedProminent)
-                        }
-                        .padding(.vertical, 6)
+                        EmptyStatePanel(health: health)
+                            .listRowInsets(EdgeInsets())
+                            .listRowBackground(Color.clear)
                     }
                 } else {
                     Section("Activity") {
@@ -87,6 +79,75 @@ struct FitnessOverviewView: View {
                 health.requestAccessAndLoadWorkouts()
             }
         }
+    }
+}
+
+// MARK: - Empty state
+
+/// The Level 1 empty state.
+///
+/// Shown when no workouts are loaded. It deliberately renders human copy only:
+/// `statusMessage` is presentation text and any raw HealthKit error detail lives
+/// in `diagnosticMessage`, tucked behind a disclosure for troubleshooting.
+private struct EmptyStatePanel: View {
+    @ObservedObject var health: HealthKitManager
+
+    private var title: String {
+        health.hasRequestedAccess ? "No workouts yet" : "Connect Apple Health"
+    }
+
+    private var explainer: String {
+        health.hasRequestedAccess
+            ? "Fitness reads workouts already recorded by Apple Watch or the Health app. Nothing has been found yet."
+            : "Fitness reads the workouts Apple Health already has on this device. Nothing is uploaded or shared."
+    }
+
+    private var primaryActionTitle: String {
+        health.hasRequestedAccess ? "Reload Workouts" : "Connect to Apple Health"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Image(systemName: "heart.text.square")
+                    .font(.title2)
+                    .foregroundStyle(.tint)
+
+                Text(title)
+                    .font(.headline)
+            }
+
+            Text(explainer)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text(health.statusMessage)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Button(primaryActionTitle) {
+                health.requestAccessAndLoadWorkouts()
+            }
+            .buttonStyle(.borderedProminent)
+
+            if let diagnostic = health.diagnosticMessage {
+                DisclosureGroup("Technical details") {
+                    Text(diagnostic)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 4)
+                }
+                .font(.footnote)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+        .padding(.vertical, 6)
     }
 }
 

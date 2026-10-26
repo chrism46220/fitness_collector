@@ -122,13 +122,13 @@ private struct CategorySummaryCard: View {
                     HStack(alignment: .top, spacing: 0) {
                         column(distanceText, "Miles")
                         column(heartRateText, "Avg HR")
-                        column(Spacer, "")
+                        emptyColumn()
                     }
                 } else {
                     HStack(alignment: .top, spacing: 0) {
                         column(heartRateText, "Avg HR")
                         column(lastWorkoutText, "Last")
-                        column(Spacer, "")
+                        emptyColumn()
                     }
                 }
             }
@@ -139,7 +139,11 @@ private struct CategorySummaryCard: View {
         .padding(.vertical, 6)
     }
 
-    private let Spacer = ""
+    /// Renders an empty grid cell so three-column rows keep equal widths.
+    /// Replaces a String constant that shadowed the SwiftUI Spacer view.
+    private func emptyColumn() -> some View {
+        column("", "")
+    }
 
     private var caloriesText: String {
         stats.totalCalories > 0
