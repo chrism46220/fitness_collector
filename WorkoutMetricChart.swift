@@ -9,6 +9,7 @@ struct WorkoutMetricChart<SelectionSummary: View>: View {
     let value: (WorkoutRow) -> Double?
     let onSelectWorkout: (WorkoutRow) -> Void
     let workoutNoun: String
+    var resetsSelectionOnRangeChange = false
     @ViewBuilder let selectionSummary: (WorkoutRow, String, Double?) -> SelectionSummary
 
     @State private var selectedDate: Date?
@@ -89,6 +90,11 @@ struct WorkoutMetricChart<SelectionSummary: View>: View {
             }
         }
         .padding(.vertical, 8)
+        .onChange(of: chartRange) { _, _ in
+            if resetsSelectionOnRangeChange {
+                selectedDate = nil
+            }
+        }
     }
 
     private func yAxisColumn() -> some View {
@@ -128,7 +134,7 @@ struct WorkoutMetricChart<SelectionSummary: View>: View {
             return String(format: "%.0f", value)
         }
 
-        if unit.lowercased().contains("mile") {
+        if unit.lowercased().contains("mile") || unit == "Minutes" {
             return String(format: "%.1f", value)
         }
 

@@ -573,11 +573,11 @@ struct WorkoutRowView: View {
 
             Text("Duration: \(formatDuration(workout.durationMinutes)) min")
 
-            if let distance = workout.distanceMiles {
+            if workout.category != .lifting, let distance = workout.distanceMiles {
                 Text("Distance: \(formatDistance(distance)) mi")
             }
 
-            if let pace = workout.averagePaceSecondsPerMile {
+            if workout.category != .lifting, let pace = workout.averagePaceSecondsPerMile {
                 Text("Avg Pace: \(formatPace(pace))/mi")
             }
 
@@ -593,7 +593,7 @@ struct WorkoutRowView: View {
             }
 
             if let calories = workout.calories {
-                Text("Calories: \(formatCalories(calories)) kcal")
+                Text("\(workout.category == .lifting ? "Active Calories" : "Calories"): \(formatCalories(calories)) kcal")
             }
         }
         .padding(.vertical, 4)
@@ -621,11 +621,11 @@ struct WorkoutDetailView: View {
 
                 metricRow(title: "Duration", value: "\(formatDuration(workout.duration / 60.0)) min")
 
-                if let distance = workout.totalDistance?.doubleValue(for: .mile()) ?? summary.distanceMiles {
+                if summary.category != .lifting, let distance = workout.totalDistance?.doubleValue(for: .mile()) ?? summary.distanceMiles {
                     metricRow(title: "Distance", value: "\(formatDistance(distance)) mi")
                 }
 
-                if let pace = summary.averagePaceSecondsPerMile {
+                if summary.category != .lifting, let pace = summary.averagePaceSecondsPerMile {
                     metricRow(title: "Average Pace", value: "\(formatPace(pace))/mi")
                 }
 
@@ -640,7 +640,7 @@ struct WorkoutDetailView: View {
                 }
 
                 if let calories = summary.calories {
-                    metricRow(title: "Calories", value: "\(formatCalories(calories)) kcal")
+                    metricRow(title: summary.category == .lifting ? "Active Calories" : "Calories", value: "\(formatCalories(calories)) kcal")
                 }
 
                 Divider()
@@ -669,76 +669,78 @@ struct WorkoutDetailView: View {
                     }
                 }
 
-                Divider()
+                if summary.category != .lifting {
+                    Divider()
 
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Pace Over Time")
-                        .font(.title2)
-                        .bold()
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Pace Over Time")
+                            .font(.title2)
+                            .bold()
 
-                    Text(health.paceDetailMessage)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-
-                    if !health.paceSamples.isEmpty {
-
-                        Chart(health.paceSamples) { sample in
-                            LineMark(
-                                x: .value("Minutes", sample.minutesFromStart),
-                                y: .value("Pace", sample.paceMinutesPerMile)
-                            )
-                            .interpolationMethod(.catmullRom)
-                        }
-                        .frame(height: 260)
-                        .chartXAxisLabel("Minutes")
-                        .chartYAxisLabel("Pace (min/mi)")
-                        .chartYScale(domain: paceYAxisDomain(health.paceSamples))
-                    }
-                }
-
-                Divider()
-
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Heart Rate + Pace Overlay")
-                        .font(.title2)
-                        .bold()
-
-                    Text("Pace is inverted and scaled so faster pace trends upward.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-
-                    if !health.heartRateSamples.isEmpty && !health.paceSamples.isEmpty {
-                        Chart {
-                            ForEach(health.heartRateSamples) { sample in
-                                LineMark(
-                                    x: .value("Minutes", sample.minutesFromStart),
-                                    y: .value("Value", sample.bpm)
-                                )
-                                .interpolationMethod(.catmullRom)
-                                .foregroundStyle(by: .value("Series", "Heart Rate"))
-                            }
-
-                            ForEach(health.paceSamples) { sample in
-                                LineMark(
-                                    x: .value("Minutes", sample.minutesFromStart),
-                                    y: .value("Value", (20.0 - sample.paceMinutesPerMile) * 10.0)
-                                )
-                                .interpolationMethod(.catmullRom)
-                                .foregroundStyle(by: .value("Series", "Pace"))
-                            }
-                        }
-                        .chartForegroundStyleScale([
-                            "Heart Rate": .red,
-                            "Pace": .blue
-                        ])
-                        .chartLegend(position: .top, alignment: .leading)
-                        .frame(height: 300)
-                        .chartXAxisLabel("Minutes")
-                        .chartYAxisLabel("HR / scaled pace")
-                    } else {
-                        Text("Overlay needs both heart rate and pace data.")
+                        Text(health.paceDetailMessage)
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
+
+                        if !health.paceSamples.isEmpty {
+
+                            Chart(health.paceSamples) { sample in
+                                LineMark(
+                                    x: .value("Minutes", sample.minutesFromStart),
+                                    y: .value("Pace", sample.paceMinutesPerMile)
+                                )
+                                .interpolationMethod(.catmullRom)
+                            }
+                            .frame(height: 260)
+                            .chartXAxisLabel("Minutes")
+                            .chartYAxisLabel("Pace (min/mi)")
+                            .chartYScale(domain: paceYAxisDomain(health.paceSamples))
+                        }
+                    }
+
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Heart Rate + Pace Overlay")
+                            .font(.title2)
+                            .bold()
+
+                        Text("Pace is inverted and scaled so faster pace trends upward.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+
+                        if !health.heartRateSamples.isEmpty && !health.paceSamples.isEmpty {
+                            Chart {
+                                ForEach(health.heartRateSamples) { sample in
+                                    LineMark(
+                                        x: .value("Minutes", sample.minutesFromStart),
+                                        y: .value("Value", sample.bpm)
+                                    )
+                                    .interpolationMethod(.catmullRom)
+                                    .foregroundStyle(by: .value("Series", "Heart Rate"))
+                                }
+
+                                ForEach(health.paceSamples) { sample in
+                                    LineMark(
+                                        x: .value("Minutes", sample.minutesFromStart),
+                                        y: .value("Value", (20.0 - sample.paceMinutesPerMile) * 10.0)
+                                    )
+                                    .interpolationMethod(.catmullRom)
+                                    .foregroundStyle(by: .value("Series", "Pace"))
+                                }
+                            }
+                            .chartForegroundStyleScale([
+                                "Heart Rate": .red,
+                                "Pace": .blue
+                            ])
+                            .chartLegend(position: .top, alignment: .leading)
+                            .frame(height: 300)
+                            .chartXAxisLabel("Minutes")
+                            .chartYAxisLabel("HR / scaled pace")
+                        } else {
+                            Text("Overlay needs both heart rate and pace data.")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
             }
@@ -748,7 +750,9 @@ struct WorkoutDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             health.fetchHeartRateSamples(for: workout)
-            health.fetchPaceSamples(for: workout)
+            if summary.category != .lifting {
+                health.fetchPaceSamples(for: workout)
+            }
         }
     }
 
@@ -814,6 +818,9 @@ extension HKWorkoutActivityType {
         case .walking: return "Walking"
         case .cycling: return "Cycling"
         case .traditionalStrengthTraining: return "Strength Training"
+        case .functionalStrengthTraining: return "Functional Strength Training"
+        case .coreTraining: return "Core Training"
+        case .crossTraining: return "Cross Training"
         case .soccer: return "Soccer"
         case .tennis: return "Tennis"
         case .highIntensityIntervalTraining: return "HIIT"

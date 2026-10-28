@@ -38,7 +38,7 @@ enum ActivityCategory: String, CaseIterable, Identifiable, Sendable {
     var subtitle: String {
         switch self {
         case .running: return "Runs, pace, heart rate"
-        case .lifting: return "Strength sessions, volume"
+        case .lifting: return "Strength sessions, duration, calories"
         case .tennis: return "Matches, duration, heart rate"
         case .other: return "Walking, cycling, HIIT and more"
         }

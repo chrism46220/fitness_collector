@@ -4,7 +4,7 @@
 //
 //  LEVEL 2 — Activity view. One screen per ActivityCategory.
 //
-//  Running reuses the existing running charts unchanged. The other categories
+//  Running and Lifting share interactive trends. Other categories
 //  get category-appropriate summaries and a workout history list. Every metric
 //  shown is read from HealthKit; nothing is inferred or fabricated.
 //
@@ -26,8 +26,9 @@ struct ActivityView: View {
     var body: some View {
         Group {
             if category == .running {
-                // Level 2 for running is the original interface, preserved as-is.
                 RunningActivityView(health: health)
+            } else if category == .lifting {
+                LiftingActivityView(health: health)
             } else {
                 genericActivityList
             }

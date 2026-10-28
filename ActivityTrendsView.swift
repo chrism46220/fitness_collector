@@ -5,6 +5,18 @@ enum ChartRange: String, CaseIterable {
     case thirty = "30D"
     case ninety = "90D"
     case all = "All"
+
+    func filter(_ workouts: [WorkoutRow], now: Date = Date(), calendar: Calendar = .current) -> [WorkoutRow] {
+        let days: Int
+        switch self {
+        case .seven: days = 7
+        case .thirty: days = 30
+        case .ninety: days = 90
+        case .all: return workouts
+        }
+        let cutoff = calendar.date(byAdding: .day, value: -days, to: now) ?? now
+        return workouts.filter { $0.start >= cutoff }
+    }
 }
 
 /// Describes a per-workout series without coupling charts to an activity category.
@@ -13,6 +25,10 @@ struct WorkoutMetric: Identifiable {
     let title: String
     let unit: String
     let value: (WorkoutRow) -> Double?
+
+    func plottableWorkouts(in workouts: [WorkoutRow]) -> [WorkoutRow] {
+        workouts.filter { value($0)?.isFinite == true }
+    }
 }
 
 struct ActivityTrendsView<SelectionSummary: View>: View {
@@ -22,6 +38,8 @@ struct ActivityTrendsView<SelectionSummary: View>: View {
     let emptyMessage: String
     let workoutNoun: String
     let metrics: [WorkoutMetric]
+    var showsMissingDataStates = false
+    var emptyRangeMessage = "No workouts in this range."
     @ViewBuilder let selectionSummary: (WorkoutRow, String, Double?) -> SelectionSummary
     @State private var chartRange: ChartRange = .thirty
     @State private var selectedWorkout: WorkoutRow?
@@ -33,22 +51,7 @@ struct ActivityTrendsView<SelectionSummary: View>: View {
     }
 
     private var chartWorkouts: [WorkoutRow] {
-        guard chartRange != .all else { return workouts }
-
-        let days: Int = switch chartRange {
-        case .seven: 7
-        case .thirty: 30
-        case .ninety: 90
-        case .all: 0
-        }
-
-        let cutoff = Calendar.current.date(
-            byAdding: .day,
-            value: -days,
-            to: Date()
-        ) ?? Date()
-
-        return workouts.filter { $0.start >= cutoff }
+        chartRange.filter(workouts)
     }
 
     var body: some View {
@@ -72,17 +75,37 @@ struct ActivityTrendsView<SelectionSummary: View>: View {
                         }
                         .pickerStyle(.segmented)
 
-                        ForEach(metrics) { metric in
-                            WorkoutMetricChart(
-                                title: metric.title,
-                                unit: metric.unit,
-                                workouts: chartWorkouts,
-                                chartRange: chartRange,
-                                value: metric.value,
-                                onSelectWorkout: { selectedWorkout = $0 },
-                                workoutNoun: workoutNoun,
-                                selectionSummary: selectionSummary
-                            )
+                        if showsMissingDataStates && chartWorkouts.isEmpty {
+                            Text(emptyRangeMessage)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            ForEach(metrics) { metric in
+                                let metricWorkouts = showsMissingDataStates
+                                    ? metric.plottableWorkouts(in: chartWorkouts)
+                                    : chartWorkouts
+
+                                if showsMissingDataStates && metricWorkouts.isEmpty {
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        Text(metric.title).font(.headline)
+                                        Text("No \(metric.title.lowercased()) data in this range.")
+                                            .font(.subheadline)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .padding(.vertical, 8)
+                                } else {
+                                    WorkoutMetricChart(
+                                        title: metric.title,
+                                        unit: metric.unit,
+                                        workouts: metricWorkouts,
+                                        chartRange: chartRange,
+                                        value: metric.value,
+                                        onSelectWorkout: { selectedWorkout = $0 },
+                                        workoutNoun: workoutNoun,
+                                        resetsSelectionOnRangeChange: showsMissingDataStates,
+                                        selectionSummary: selectionSummary
+                                    )
+                                }
+                            }
                         }
                     }
                 } else {
