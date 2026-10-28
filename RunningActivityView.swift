@@ -4,13 +4,6 @@ import Combine
 import Charts
 import CoreLocation
 
-enum ChartRange: String, CaseIterable {
-    case seven = "7D"
-    case thirty = "30D"
-    case ninety = "90D"
-    case all = "All"
-}
-
 struct HeartRateSample: Identifiable {
     let id = UUID()
     let date: Date
@@ -512,367 +505,56 @@ final class HealthKitManager: ObservableObject {
 
 struct RunningActivityView: View {
     @ObservedObject var health: HealthKitManager
-    @State private var chartRange: ChartRange = .thirty
-    @State private var selectedWorkout: WorkoutRow?
-
-    private var runs: [WorkoutRow] {
-        health.workouts
-            .filter { $0.category == .running }
-            .sorted { $0.start < $1.start }
-    }
-
-    private var chartRuns: [WorkoutRow] {
-        guard chartRange != .all else { return runs }
-
-        let days: Int = switch chartRange {
-        case .seven: 7
-        case .thirty: 30
-        case .ninety: 90
-        case .all: 0
-        }
-
-        let cutoff = Calendar.current.date(
-            byAdding: .day,
-            value: -days,
-            to: Date()
-        ) ?? Date()
-
-        return runs.filter { $0.start >= cutoff }
-    }
 
     var body: some View {
-        VStack(spacing: 0) {
-            if health.statusMessage != "Not connected" {
-                Text(health.statusMessage)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal)
-                    .padding(.bottom, 6)
+        ActivityTrendsView(
+            health: health,
+            category: .running,
+            trendsTitle: "Run Trends",
+            emptyMessage: "No running workouts loaded yet.",
+            workoutNoun: "run",
+            metrics: [
+                WorkoutMetric(id: "distance", title: "Distance per Run", unit: "Miles", value: { $0.distanceMiles }),
+                WorkoutMetric(id: "averageHeartRate", title: "Average Heart Rate", unit: "BPM", value: { $0.averageHeartRate }),
+                WorkoutMetric(id: "maxHeartRate", title: "Max Heart Rate", unit: "BPM", value: { $0.maxHeartRate })
+            ],
+            selectionSummary: { workout, unit, value in
+                RunningSelectionSummary(workout: workout, unit: unit, value: value)
             }
-
-            List {
-                    if !runs.isEmpty {
-                        Section("Run Trends") {
-                            Picker("Range", selection: $chartRange) {
-                                ForEach(ChartRange.allCases, id: \.self) { range in
-                                    Text(range.rawValue).tag(range)
-                                }
-                            }
-                            .pickerStyle(.segmented)
-                            
-                            RunMetricChart(
-                                title: "Distance per Run",
-                                unit: "Miles",
-                                runs: chartRuns,
-                                chartRange: chartRange,
-                                value: { $0.distanceMiles },
-                                onSelectWorkout: { selectedWorkout = $0 }
-                            )
-                            
-                            RunMetricChart(
-                                title: "Average Heart Rate",
-                                unit: "BPM",
-                                runs: chartRuns,
-                                chartRange: chartRange,
-                                value: { $0.averageHeartRate },
-                                onSelectWorkout: { selectedWorkout = $0 }
-                            )
-                            
-                            RunMetricChart(
-                                title: "Max Heart Rate",
-                                unit: "BPM",
-                                runs: chartRuns,
-                                chartRange: chartRange,
-                                value: { $0.maxHeartRate },
-                                onSelectWorkout: { selectedWorkout = $0 }
-                            )
-                        }
-                    } else {
-                        Section("Run Trends") {
-                            Text("No running workouts loaded yet.")
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    
-                    Section("Workouts") {
-                        ForEach(runs.reversed()) { workout in
-                            NavigationLink {
-                                WorkoutDetailView(workout: workout.hkWorkout, summary: workout, health: health)
-                            } label: {
-                                WorkoutRowView(workout: workout)
-                            }
-                        }
-                    }
-            }
-        }
-        .sheet(item: $selectedWorkout) { workout in
-            NavigationStack {
-                WorkoutDetailView(
-                    workout: workout.hkWorkout,
-                    summary: workout,
-                    health: health
-                )
-            }
-        }
+        )
     }
 }
 
-struct RunMetricChart: View {
-    let title: String
+struct RunningSelectionSummary: View {
+    let workout: WorkoutRow
     let unit: String
-    let runs: [WorkoutRow]
-    let chartRange: ChartRange
-    let value: (WorkoutRow) -> Double?
-    let onSelectWorkout: (WorkoutRow) -> Void
-
-    @State private var selectedDate: Date?
-    @State private var isScrollEnabled: Bool = false
-
-    private let pointSpacing: CGFloat = 58
-    private let chartHeight: CGFloat = 220
-    private let yAxisWidth: CGFloat = 42
-    private let yAxisSpacing: CGFloat = 6
-    private let yAxisTickCount = 4
+    let value: Double?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(title)
-                        .font(.headline)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.85)
-
-                    Text(unit.uppercased())
-                        .font(.caption2)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3)
-                        .background(Color(.secondarySystemBackground))
-                        .clipShape(Capsule())
-                }
-
-                HStack {
-                    Spacer()
-
-                    Picker("Scroll", selection: $isScrollEnabled) {
-                        Text("Scroll Off").tag(false)
-                        Text("Scroll On").tag(true)
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(width: 168)
-                }
-            }
-
-            GeometryReader { geometry in
-                let availablePlotWidth = max(1, geometry.size.width - yAxisWidth - yAxisSpacing)
-                let plotWidth = chartWidth(containerWidth: availablePlotWidth)
-
-                HStack(alignment: .top, spacing: yAxisSpacing) {
-                    yAxisColumn()
-
-                    if isScrollEnabled {
-                        ScrollView(.horizontal, showsIndicators: true) {
-                            chartBody(width: plotWidth)
-                                .frame(
-                                    width: plotWidth,
-                                    height: chartHeight
-                                )
-                        }
-                    } else {
-                        chartBody(width: availablePlotWidth)
-                            .frame(
-                                width: availablePlotWidth,
-                                height: chartHeight
-                            )
-                    }
-                }
-            }
-            .frame(height: chartHeight + 20)
-
-            Text(isScrollEnabled ? "Scroll to explore · Tap a run" : "Full range shown · Tap a run")
-                .font(.caption)
+        VStack(alignment: .leading) {
+            Text(workout.start.formatted(date: .abbreviated, time: .shortened))
+                .font(.subheadline)
                 .foregroundStyle(.secondary)
 
-            if let selectedDate,
-               let closest = closestRun(to: selectedDate) {
+            Text("Run Time: \(formatDuration(workout.durationMinutes)) min")
 
-                VStack(alignment: .leading) {
-                    Text(closest.start.formatted(date: .abbreviated, time: .shortened))
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-
-                    Text("Run Time: \(formatDuration(closest.durationMinutes)) min")
-
-                    if let y = value(closest) {
-                        Text("\(unit): \(formatValue(y))")
-                            .font(.headline)
-                    }
-
-                    if let pace = closest.averagePaceSecondsPerMile {
-                        Text("Pace: \(formatPace(pace))/mi")
-                    }
-
-                    if let hr = closest.averageHeartRate {
-                        Text("Avg HR: \(formatHeartRate(hr)) bpm")
-                    }
-
-                    if let maxHR = closest.maxHeartRate {
-                        Text("Max HR: \(formatHeartRate(maxHR)) bpm")
-                    }
-                }
-                .padding(.top, 6)
-            }
-        }
-        .padding(.vertical, 8)
-    }
-
-    private func yAxisColumn() -> some View {
-        let ticks = yAxisTickValues().reversed()
-
-        return VStack(spacing: 0) {
-            ForEach(Array(ticks.enumerated()), id: \.element) { index, tick in
-                Text(formatAxisTick(tick))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-
-                if index < yAxisTickCount - 1 {
-                    Spacer(minLength: 0)
-                }
-            }
-        }
-        .frame(width: yAxisWidth, height: chartHeight)
-        // These roughly match Swift Charts' internal plot-area inset so the
-        // fixed labels line up with the visible horizontal gridlines.
-        .padding(.top, 8)
-        .padding(.bottom, 30)
-    }
-
-    func yDomain() -> ClosedRange<Double> {
-        // Implementation lives in ChartGeometry so it can be unit tested.
-        ChartGeometry.yDomain(runs, value: value)
-    }
-
-    func yAxisTickValues(tickCount: Int? = nil) -> [Double] {
-        // Implementation lives in ChartGeometry so it can be unit tested.
-        ChartGeometry.tickValues(in: yDomain(), tickCount: tickCount ?? self.yAxisTickCount)
-    }
-
-    private func formatAxisTick(_ value: Double) -> String {
-        if unit.lowercased().contains("bpm") {
-            return String(format: "%.0f", value)
-        }
-
-        if unit.lowercased().contains("mile") {
-            return String(format: "%.1f", value)
-        }
-
-        return String(format: "%.0f", value)
-    }
-
-    private func chartBody(width: CGFloat) -> some View {
-        Chart {
-            ForEach(runs) { run in
-                if let y = value(run) {
-                    LineMark(
-                        x: .value("Date", run.start),
-                        y: .value(unit, y)
-                    )
-                    .interpolationMethod(.catmullRom)
-
-                    PointMark(
-                        x: .value("Date", run.start),
-                        y: .value(unit, y)
-                    )
-                }
+            if let value {
+                Text("\(unit): \(String(format: "%.2f", value))")
+                    .font(.headline)
             }
 
-            if let selectedDate,
-               let selected = closestRun(to: selectedDate),
-               let y = value(selected) {
-                PointMark(
-                    x: .value("Selected Date", selected.start),
-                    y: .value(unit, y)
-                )
-                .symbolSize(120)
+            if let pace = workout.averagePaceSecondsPerMile {
+                Text("Pace: \(formatPace(pace))/mi")
+            }
+
+            if let hr = workout.averageHeartRate {
+                Text("Avg HR: \(formatHeartRate(hr)) bpm")
+            }
+
+            if let maxHR = workout.maxHeartRate {
+                Text("Max HR: \(formatHeartRate(maxHR)) bpm")
             }
         }
-        .chartOverlay { proxy in
-            GeometryReader { geo in
-                Rectangle()
-                    .fill(.clear)
-                    .contentShape(Rectangle())
-                    .simultaneousGesture(
-                        SpatialTapGesture()
-                            .onEnded { tap in
-                                guard let plotFrame = proxy.plotFrame else { return }
-
-                                let x = tap.location.x - geo[plotFrame].origin.x
-
-                                if let date: Date = proxy.value(atX: x),
-                                   let closest = closestRun(to: date) {
-                                    let generator = UIImpactFeedbackGenerator(style: .light)
-                                    generator.prepare()
-                                    generator.impactOccurred()
-
-                                    selectedDate = closest.start
-                                    onSelectWorkout(closest)
-                                }
-                            }
-                    )
-            }
-        }
-        .chartYScale(domain: yDomain())
-        .chartYAxis {
-            AxisMarks(position: .leading, values: yAxisTickValues()) { _ in
-                AxisGridLine()
-            }
-        }
-        .chartXAxis {
-            if chartRange == .all {
-                AxisMarks(values: .stride(by: .month, count: 1)) { value in
-                    AxisGridLine()
-                    AxisTick()
-
-                    if let date = value.as(Date.self) {
-                        let month = Calendar.current.component(.month, from: date)
-
-                        AxisValueLabel {
-                            VStack(spacing: 2) {
-                                Text(date.formatted(.dateTime.month(.abbreviated)))
-
-                                if month == 1 {
-                                    Text(date.formatted(.dateTime.year()))
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                        }
-                    }
-                }
-            } else {
-                AxisMarks()
-            }
-        }
-    }
-
-    private func chartWidth(containerWidth: CGFloat) -> CGFloat {
-        guard isScrollEnabled else { return containerWidth }
-
-        let calculated = CGFloat(max(runs.count, 1)) * pointSpacing
-        return max(containerWidth, calculated)
-    }
-
-    func closestRun(to date: Date) -> WorkoutRow? {
-        // Implementation lives in ChartGeometry so it can be unit tested.
-        ChartGeometry.closestItem(to: date, in: runs, timestamp: \.start)
-    }
-
-    private func formatValue(_ value: Double) -> String {
-        String(format: "%.2f", value)
     }
 }
 

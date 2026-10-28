@@ -128,14 +128,16 @@ final class ChartGeometryTests: XCTestCase {
 
     private func makeChart(runs: [WorkoutRow],
                            value: @escaping (WorkoutRow) -> Double?)
-        -> RunMetricChart {
-        RunMetricChart(
+        -> WorkoutMetricChart<RunningSelectionSummary> {
+        WorkoutMetricChart<RunningSelectionSummary>(
             title: "Test",
             unit: "bpm",
-            runs: runs,
+            workouts: runs,
             chartRange: .thirty,
             value: value,
-            onSelectWorkout: { _ in }
+            onSelectWorkout: { _ in },
+            workoutNoun: "run",
+            selectionSummary: { RunningSelectionSummary(workout: $0, unit: $1, value: $2) }
         )
     }
 
@@ -274,7 +276,7 @@ final class ChartGeometryTests: XCTestCase {
         let chart = makeChart(runs: rows) { _ in 100 }
 
         let probe = base.addingTimeInterval(70)
-        XCTAssertEqual(chart.closestRun(to: probe)?.id, rows[1].id)
+        XCTAssertEqual(chart.closestWorkout(to: probe)?.id, rows[1].id)
     }
 
     // Exact match wins.
@@ -285,12 +287,12 @@ final class ChartGeometryTests: XCTestCase {
             makeRow(start: base.addingTimeInterval(60)),
         ]
         let chart = makeChart(runs: rows) { _ in 100 }
-        XCTAssertEqual(chart.closestRun(to: base.addingTimeInterval(60))?.id, rows[1].id)
+        XCTAssertEqual(chart.closestWorkout(to: base.addingTimeInterval(60))?.id, rows[1].id)
     }
 
     // Empty run list yields nil rather than crashing.
     func testClosestRunEmptyReturnsNil() {
         let chart = makeChart(runs: []) { _ in nil }
-        XCTAssertNil(chart.closestRun(to: Date()))
+        XCTAssertNil(chart.closestWorkout(to: Date()))
     }
 }
