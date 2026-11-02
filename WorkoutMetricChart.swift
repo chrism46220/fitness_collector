@@ -9,13 +9,16 @@ struct WorkoutMetricChart<SelectionSummary: View>: View {
     let value: (WorkoutRow) -> Double?
     let onSelectWorkout: (WorkoutRow) -> Void
     let workoutNoun: String
-    var resetsSelectionOnRangeChange = false
+    let activityDates: [Date]
+    let fullDateRange: ClosedRange<Date>
+    @Binding var visibleDateRange: ClosedRange<Date>
+    @Binding var isScrollEnabled: Bool
+    var interactionID = ""
     @ViewBuilder let selectionSummary: (WorkoutRow, String, Double?) -> SelectionSummary
 
-    @State private var selectedDate: Date?
-    @State private var isScrollEnabled: Bool = false
+    @State private var selectedWorkoutID: UUID?
+    @State private var measuredPlotWidth: CGFloat?
 
-    private let pointSpacing: CGFloat = 58
     private let chartHeight: CGFloat = 220
     private let yAxisWidth: CGFloat = 42
     private let yAxisSpacing: CGFloat = 6
@@ -43,7 +46,12 @@ struct WorkoutMetricChart<SelectionSummary: View>: View {
                 HStack {
                     Spacer()
 
-                    Picker("Scroll", selection: $isScrollEnabled) {
+                    Picker("Scroll", selection: Binding(get: { isScrollEnabled }, set: { enabled in
+                        isScrollEnabled = enabled
+                        visibleDateRange = enabled
+                            ? ChartViewport.recentDetail(in: fullDateRange, dates: activityDates, width: measuredPlotWidth ?? 280)
+                            : fullDateRange
+                    })) {
                         Text("Scroll Off").tag(false)
                         Text("Scroll On").tag(true)
                     }
@@ -54,47 +62,40 @@ struct WorkoutMetricChart<SelectionSummary: View>: View {
 
             GeometryReader { geometry in
                 let availablePlotWidth = max(1, geometry.size.width - yAxisWidth - yAxisSpacing)
-                let plotWidth = chartWidth(containerWidth: availablePlotWidth)
 
                 HStack(alignment: .top, spacing: yAxisSpacing) {
                     yAxisColumn()
-
-                    if isScrollEnabled {
-                        ScrollView(.horizontal, showsIndicators: true) {
-                            chartBody(width: plotWidth)
-                                .frame(
-                                    width: plotWidth,
-                                    height: chartHeight
-                                )
-                        }
-                    } else {
-                        chartBody(width: availablePlotWidth)
-                            .frame(
-                                width: availablePlotWidth,
-                                height: chartHeight
-                            )
-                    }
+                    chartBody(width: availablePlotWidth)
+                        .frame(width: availablePlotWidth, height: chartHeight)
                 }
             }
             .frame(height: chartHeight + 20)
 
-            Text(isScrollEnabled ? "Scroll to explore · Tap a \(workoutNoun)" : "Full range shown · Tap a \(workoutNoun)")
+            Text(ChartViewport.isZoomed(visibleDateRange, in: fullDateRange)
+                 ? "Pinch to zoom · Drag to explore · Double-tap to reset"
+                 : "Full range · Pinch to zoom · Tap a \(workoutNoun)")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            if let selectedDate,
-               let closest = closestWorkout(to: selectedDate) {
-
-                selectionSummary(closest, unit, value(closest))
+            if let selected = selectedWorkout {
+                selectionSummary(selected, unit, value(selected))
                     .padding(.top, 6)
             }
         }
         .padding(.vertical, 8)
-        .onChange(of: chartRange) { _, _ in
-            if resetsSelectionOnRangeChange {
-                selectedDate = nil
-            }
+        .onChange(of: chartRange) { _, _ in selectedWorkoutID = nil }
+        .onChange(of: visibleDateRange) { _, _ in
+            if selectedWorkout == nil { selectedWorkoutID = nil }
         }
+    }
+
+    private var visibleWorkouts: [WorkoutRow] {
+        ChartGeometry.visibleItems(workouts, in: visibleDateRange, timestamp: \.start, value: value)
+            .sorted { $0.start < $1.start }
+    }
+
+    private var selectedWorkout: WorkoutRow? {
+        visibleWorkouts.first { $0.id == selectedWorkoutID }
     }
 
     private func yAxisColumn() -> some View {
@@ -121,7 +122,7 @@ struct WorkoutMetricChart<SelectionSummary: View>: View {
 
     func yDomain() -> ClosedRange<Double> {
         // Implementation lives in ChartGeometry so it can be unit tested.
-        ChartGeometry.yDomain(workouts, value: value)
+        ChartGeometry.yDomain(visibleWorkouts, value: value)
     }
 
     func yAxisTickValues(tickCount: Int? = nil) -> [Double] {
@@ -143,100 +144,74 @@ struct WorkoutMetricChart<SelectionSummary: View>: View {
 
     private func chartBody(width: CGFloat) -> some View {
         Chart {
-            ForEach(workouts) { run in
-                if let y = value(run) {
-                    LineMark(
-                        x: .value("Date", run.start),
-                        y: .value(unit, y)
-                    )
-                    .interpolationMethod(.catmullRom)
-
-                    PointMark(
-                        x: .value("Date", run.start),
-                        y: .value(unit, y)
-                    )
+            ForEach(visibleWorkouts) { workout in
+                if let y = value(workout) {
+                    LineMark(x: .value("Date", workout.start), y: .value(unit, y))
+                        .interpolationMethod(.catmullRom)
+                    PointMark(x: .value("Date", workout.start), y: .value(unit, y))
                 }
             }
-
-            if let selectedDate,
-               let selected = closestWorkout(to: selectedDate),
-               let y = value(selected) {
-                PointMark(
-                    x: .value("Selected Date", selected.start),
-                    y: .value(unit, y)
-                )
-                .symbolSize(120)
+            if let selected = selectedWorkout, let y = value(selected) {
+                PointMark(x: .value("Selected Date", selected.start), y: .value(unit, y))
+                    .symbolSize(120)
             }
+        }
+        .chartXScale(domain: visibleDateRange, range: .plotDimension(padding: 0))
+        .chartYScale(domain: yDomain())
+        .chartPlotStyle { plot in
+            plot.clipped()
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { measuredPlotWidth = $0 }
         }
         .chartOverlay { proxy in
             GeometryReader { geo in
-                Rectangle()
-                    .fill(.clear)
-                    .contentShape(Rectangle())
-                    .simultaneousGesture(
-                        SpatialTapGesture()
-                            .onEnded { tap in
-                                guard let plotFrame = proxy.plotFrame else { return }
-
-                                let x = tap.location.x - geo[plotFrame].origin.x
-
-                                if let date: Date = proxy.value(atX: x),
-                                   let closest = closestWorkout(to: date) {
-                                    let generator = UIImpactFeedbackGenerator(style: .light)
-                                    generator.prepare()
-                                    generator.impactOccurred()
-
-                                    selectedDate = closest.start
-                                    onSelectWorkout(closest)
-                                }
-                            }
+                if let plotFrame = proxy.plotFrame {
+                    let frame = geo[plotFrame]
+                    ChartPlotGestures(
+                        visible: $visibleDateRange, bounds: fullDateRange, interactionID: interactionID,
+                        onReset: {
+                            selectedWorkoutID = nil
+                            isScrollEnabled = false
+                            visibleDateRange = fullDateRange
+                        },
+                        onTap: { fraction in
+                            let date = visibleDateRange.lowerBound.addingTimeInterval(
+                                fraction * ChartViewport.duration(visibleDateRange))
+                            guard let closest = closestWorkout(to: date) else { return }
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            selectedWorkoutID = closest.id
+                            onSelectWorkout(closest)
+                        }
                     )
+                    .allowsHitTesting(false)
+                    .frame(width: frame.width, height: frame.height)
+                    .position(x: frame.midX, y: frame.midY)
+                }
             }
         }
-        .chartYScale(domain: yDomain())
         .chartYAxis {
-            AxisMarks(position: .leading, values: yAxisTickValues()) { _ in
-                AxisGridLine()
-            }
+            AxisMarks(position: .leading, values: yAxisTickValues()) { _ in AxisGridLine() }
         }
         .chartXAxis {
-            if chartRange == .all {
-                AxisMarks(values: .stride(by: .month, count: 1)) { value in
-                    AxisGridLine()
-                    AxisTick()
-
-                    if let date = value.as(Date.self) {
-                        let month = Calendar.current.component(.month, from: date)
-
-                        AxisValueLabel {
-                            VStack(spacing: 2) {
-                                Text(date.formatted(.dateTime.month(.abbreviated)))
-
-                                if month == 1 {
-                                    Text(date.formatted(.dateTime.year()))
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                        }
+            let plotWidth = measuredPlotWidth ?? width
+            let ticks = ChartDateAxis.ticks(in: visibleDateRange, width: plotWidth)
+            AxisMarks(values: ticks.map(\.date)) { axis in
+                AxisGridLine()
+                AxisTick()
+                if let date = axis.as(Date.self), let tick = ticks.first(where: { $0.date == date }) {
+                    AxisValueLabel(centered: false) {
+                        Text(tick.label)
+                            .font(.caption2)
+                            .multilineTextAlignment(.center)
+                            .lineLimit(2)
+                            .minimumScaleFactor(0.65)
+                            .frame(width: max(1, min(84, plotWidth / CGFloat(max(1, ticks.count)) - 4)))
                     }
                 }
-            } else {
-                AxisMarks()
             }
         }
-    }
-
-    private func chartWidth(containerWidth: CGFloat) -> CGFloat {
-        guard isScrollEnabled else { return containerWidth }
-
-        let calculated = CGFloat(max(workouts.count, 1)) * pointSpacing
-        return max(containerWidth, calculated)
     }
 
     func closestWorkout(to date: Date) -> WorkoutRow? {
-        // Implementation lives in ChartGeometry so it can be unit tested.
-        ChartGeometry.closestItem(to: date, in: workouts, timestamp: \.start)
+        ChartGeometry.closestItem(to: date, in: visibleWorkouts, timestamp: \.start)
     }
-
 }

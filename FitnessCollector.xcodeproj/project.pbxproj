@@ -20,6 +20,19 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
+				".development/chart-zoom-20261102/IMPLEMENTATION.md",
+				".development/chart-zoom-20261102/TEST-EVIDENCE.md",
+				".development/chart-zoom-20261102/final-status.json",
+				".development/chart-zoom-20261102/final-report-v1.html",
+				".development/chart-zoom-20261102/final-report-v1.md",
+				".development/chart-zoom-20261102/final-report-v2.html",
+				".development/chart-zoom-20261102/final-report-v2.md",
+				".development/chart-zoom-20261102/q-review-v1.html",
+				".development/chart-zoom-20261102/q-review-v1.md",
+				".development/chart-zoom-20261102/TEST-EVIDENCE.html",
+				".development/chart-zoom-20261102/IMPLEMENTATION.html",
+				".development/chart-zoom-20261102/overnight-silent-mode-v1.md",
+				".development/chart-zoom-20261102/overnight-silent-mode-v1.html",
 			);
 			publicHeaders = (
 			);

@@ -43,6 +43,12 @@ enum PaceSmoothing {
 /// Y-axis domain and tick computation for a metric chart.
 enum ChartGeometry {
 
+    /// The same finite, visible set drives marks, hit testing, selection and Y scaling.
+    static func visibleItems<T>(_ items: [T], in range: ClosedRange<Date>,
+                                timestamp: (T) -> Date, value: (T) -> Double?) -> [T] {
+        items.filter { range.contains(timestamp($0)) && value($0)?.isFinite == true }
+    }
+
     /// Default number of horizontal gridlines/labels.
     static let defaultTickCount = 4
 

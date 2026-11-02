@@ -137,6 +137,10 @@ final class ChartGeometryTests: XCTestCase {
             value: value,
             onSelectWorkout: { _ in },
             workoutNoun: "run",
+            activityDates: runs.map(\.start),
+            fullDateRange: ChartViewport.bounds(for: runs.map(\.start)),
+            visibleDateRange: .constant(ChartViewport.bounds(for: runs.map(\.start))),
+            isScrollEnabled: .constant(false),
             selectionSummary: { RunningSelectionSummary(workout: $0, unit: $1, value: $2) }
         )
     }

@@ -35,6 +35,10 @@ final class LiftingTrendsTests: XCTestCase {
         let chart = WorkoutMetricChart(
             title: metric.title, unit: metric.unit, workouts: plotted, chartRange: .thirty,
             value: metric.value, onSelectWorkout: { _ in }, workoutNoun: "session",
+            activityDates: plotted.map(\.start),
+            fullDateRange: ChartViewport.bounds(for: plotted.map(\.start)),
+            visibleDateRange: .constant(ChartViewport.bounds(for: plotted.map(\.start))),
+            isScrollEnabled: .constant(false),
             selectionSummary: { LiftingSelectionSummary(workout: $0, unit: $1, value: $2) }
         )
         XCTAssertEqual(plotted.map(\.id), [measured.id])

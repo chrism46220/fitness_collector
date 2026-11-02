@@ -43,6 +43,7 @@ struct ActivityTrendsView<SelectionSummary: View>: View {
     @ViewBuilder let selectionSummary: (WorkoutRow, String, Double?) -> SelectionSummary
     @State private var chartRange: ChartRange = .thirty
     @State private var selectedWorkout: WorkoutRow?
+    @State private var viewport: ChartViewportState?
 
     private var workouts: [WorkoutRow] {
         health.workouts
@@ -52,6 +53,33 @@ struct ActivityTrendsView<SelectionSummary: View>: View {
 
     private var chartWorkouts: [WorkoutRow] {
         chartRange.filter(workouts)
+    }
+
+    private var viewportContext: ChartViewportContext {
+        ChartViewportContext(category: category.rawValue, preset: chartRange.rawValue,
+                             extent: ChartViewport.bounds(for: chartWorkouts.map(\.start)))
+    }
+
+    private var currentViewport: ChartViewportState {
+        var state = viewport ?? ChartViewportState(context: viewportContext)
+        state.reconcile(viewportContext)
+        return state
+    }
+
+    private var visibleDateRange: Binding<ClosedRange<Date>> {
+        Binding(get: { currentViewport.visible }, set: { range in
+            var state = currentViewport
+            state.visible = ChartViewport.clamp(range, to: viewportContext.extent)
+            viewport = state
+        })
+    }
+
+    private var scrollMode: Binding<Bool> {
+        Binding(get: { currentViewport.scrollEnabled }, set: { enabled in
+            var state = currentViewport
+            state.scrollEnabled = enabled
+            viewport = state
+        })
     }
 
     var body: some View {
@@ -101,7 +129,11 @@ struct ActivityTrendsView<SelectionSummary: View>: View {
                                         value: metric.value,
                                         onSelectWorkout: { selectedWorkout = $0 },
                                         workoutNoun: workoutNoun,
-                                        resetsSelectionOnRangeChange: showsMissingDataStates,
+                                        activityDates: chartWorkouts.map(\.start),
+                                        fullDateRange: viewportContext.extent,
+                                        visibleDateRange: visibleDateRange,
+                                        isScrollEnabled: scrollMode,
+                                        interactionID: "\(category.rawValue)-\(chartRange.rawValue)",
                                         selectionSummary: selectionSummary
                                     )
                                 }
@@ -125,6 +157,11 @@ struct ActivityTrendsView<SelectionSummary: View>: View {
                     }
                 }
             }
+        }
+        .onChange(of: viewportContext, initial: true) { _, next in
+            var state = viewport ?? ChartViewportState(context: next)
+            state.reconcile(next)
+            viewport = state
         }
         .sheet(item: $selectedWorkout) { workout in
             NavigationStack {
