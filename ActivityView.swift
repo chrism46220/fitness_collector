@@ -29,6 +29,10 @@ struct ActivityView: View {
                 RunningActivityView(health: health)
             } else if category == .lifting {
                 LiftingActivityView(health: health)
+            } else if category == .tennis {
+                TennisActivityView(health: health)
+            } else if category == .other {
+                OtherActivityView(health: health)
             } else {
                 genericActivityList
             }
