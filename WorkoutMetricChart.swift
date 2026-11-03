@@ -14,6 +14,7 @@ struct WorkoutMetricChart<SelectionSummary: View>: View {
     @Binding var visibleDateRange: ClosedRange<Date>
     @Binding var isScrollEnabled: Bool
     var interactionID = ""
+    var emptyMessage: String? = nil
     @ViewBuilder let selectionSummary: (WorkoutRow, String, Double?) -> SelectionSummary
 
     @State private var selectedWorkoutID: UUID?
@@ -65,6 +66,7 @@ struct WorkoutMetricChart<SelectionSummary: View>: View {
 
                 HStack(alignment: .top, spacing: yAxisSpacing) {
                     yAxisColumn()
+                        .opacity(emptyMessage != nil && workouts.isEmpty ? 0 : 1)
                     chartBody(width: availablePlotWidth)
                         .frame(width: availablePlotWidth, height: chartHeight)
                 }
@@ -164,6 +166,14 @@ struct WorkoutMetricChart<SelectionSummary: View>: View {
         }
         .chartOverlay { proxy in
             GeometryReader { geo in
+                if workouts.isEmpty, let emptyMessage {
+                    Text(emptyMessage)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .allowsHitTesting(false)
+                }
                 if let plotFrame = proxy.plotFrame {
                     let frame = geo[plotFrame]
                     ChartPlotGestures(

@@ -28,6 +28,7 @@ struct TennisActivityView: View {
             workoutNoun: "session",
             metrics: Self.metrics,
             showsMissingDataStates: true,
+            showsEmptyRangeCharts: true,
             emptyRangeMessage: "No tennis sessions in this range.",
             selectionSummary: { workout, unit, value in
                 LiftingSelectionSummary(workout: workout, unit: unit, value: value)

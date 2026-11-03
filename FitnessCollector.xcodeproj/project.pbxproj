@@ -20,6 +20,9 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
+				".development/tennis-empty-presets-20261103/report.md",
+				".development/tennis-empty-presets-20261103/report.html",
+				".development/tennis-empty-presets-20261103/status.json",
 				".development/milestone-20261102/codex-implementation-v3.json",
 				".development/milestone-20261102/codex-tests-v5-request.json",
 				".development/milestone-20261102/codex-tests-v5-response.json",

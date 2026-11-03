@@ -17,6 +17,20 @@ enum ChartRange: String, CaseIterable {
         let cutoff = calendar.date(byAdding: .day, value: -days, to: now) ?? now
         return workouts.filter { $0.start >= cutoff }
     }
+
+    /// Calendar-aligned dates for an empty preset, without inventing workout data.
+    func emptyDateBounds(now: Date, calendar: Calendar = .current) -> ClosedRange<Date> {
+        let days: Int
+        switch self {
+        case .seven: days = 7
+        case .thirty: days = 30
+        case .ninety: days = 90
+        case .all: days = 365
+        }
+        let start = calendar.date(byAdding: .day, value: -days, to: now)
+            ?? now.addingTimeInterval(-Double(days) * ChartViewport.day)
+        return start...now
+    }
 }
 
 /// Describes a per-workout series without coupling charts to an activity category.
@@ -39,11 +53,14 @@ struct ActivityTrendsView<SelectionSummary: View>: View {
     let workoutNoun: String
     let metrics: [WorkoutMetric]
     var showsMissingDataStates = false
+    var showsEmptyRangeCharts = false
     var emptyRangeMessage = "No workouts in this range."
     @ViewBuilder let selectionSummary: (WorkoutRow, String, Double?) -> SelectionSummary
     @State private var chartRange: ChartRange = .thirty
     @State private var selectedWorkout: WorkoutRow?
     @State private var viewport: ChartViewportState?
+    // Keep all empty panels stable across body updates and gestures.
+    @State private var emptyRangeReferenceDate = Date()
 
     private var workouts: [WorkoutRow] {
         health.workouts
@@ -57,7 +74,9 @@ struct ActivityTrendsView<SelectionSummary: View>: View {
 
     private var viewportContext: ChartViewportContext {
         ChartViewportContext(category: category.rawValue, preset: chartRange.rawValue,
-                             extent: ChartViewport.bounds(for: chartWorkouts.map(\.start)))
+                             extent: showsEmptyRangeCharts && chartWorkouts.isEmpty
+                                ? chartRange.emptyDateBounds(now: emptyRangeReferenceDate)
+                                : ChartViewport.bounds(for: chartWorkouts.map(\.start)))
     }
 
     private var currentViewport: ChartViewportState {
@@ -103,7 +122,26 @@ struct ActivityTrendsView<SelectionSummary: View>: View {
                         }
                         .pickerStyle(.segmented)
 
-                        if showsMissingDataStates && chartWorkouts.isEmpty {
+                        if showsEmptyRangeCharts && chartWorkouts.isEmpty {
+                            ForEach(metrics) { metric in
+                                WorkoutMetricChart(
+                                    title: metric.title,
+                                    unit: metric.unit,
+                                    workouts: [],
+                                    chartRange: chartRange,
+                                    value: metric.value,
+                                    onSelectWorkout: { selectedWorkout = $0 },
+                                    workoutNoun: workoutNoun,
+                                    activityDates: [],
+                                    fullDateRange: viewportContext.extent,
+                                    visibleDateRange: visibleDateRange,
+                                    isScrollEnabled: scrollMode,
+                                    interactionID: "\(category.rawValue)-\(chartRange.rawValue)",
+                                    emptyMessage: emptyRangeMessage,
+                                    selectionSummary: selectionSummary
+                                )
+                            }
+                        } else if showsMissingDataStates && chartWorkouts.isEmpty {
                             Text(emptyRangeMessage)
                                 .foregroundStyle(.secondary)
                         } else {
