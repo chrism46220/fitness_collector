@@ -527,16 +527,53 @@ struct RunningActivityView: View {
             trendsTitle: "Run Trends",
             emptyMessage: "No running workouts loaded yet.",
             workoutNoun: "run",
-            metrics: [
-                WorkoutMetric(id: "distance", title: "Distance per Run", unit: "Miles", value: { $0.distanceMiles }),
-                WorkoutMetric(id: "averageHeartRate", title: "Average Heart Rate", unit: "BPM", value: { $0.averageHeartRate }),
-                WorkoutMetric(id: "maxHeartRate", title: "Max Heart Rate", unit: "BPM", value: { $0.maxHeartRate })
-            ],
+            metrics: Self.metrics,
             selectionSummary: { workout, unit, value in
                 RunningSelectionSummary(workout: workout, unit: unit, value: value)
             }
         )
     }
+
+    /// Shared Running series; average pace is one duration/distance value per run.
+    static let metrics: [WorkoutMetric] = [
+        WorkoutMetric(
+            id: "distance",
+            title: "Distance per Run",
+            unit: "Miles",
+            value: { $0.distanceMiles },
+            emptyMessage: nil
+        ),
+        WorkoutMetric(
+            id: "averagePace",
+            title: "Average Pace",
+            unit: "min/mi",
+            value: { row in
+                guard
+                    row.category == .running,
+                    let distance = row.distanceMiles,
+                    row.durationMinutes.isFinite && row.durationMinutes > 0,
+                    distance.isFinite && distance > 0
+                else { return nil }
+                let secondsPerMile = (row.durationMinutes * 60) / distance
+                return secondsPerMile.isFinite && secondsPerMile > 0 && secondsPerMile < Double(Int.max) ? secondsPerMile : nil
+            },
+            emptyMessage: "No average pace data in this range."
+        ),
+        WorkoutMetric(
+            id: "averageHeartRate",
+            title: "Average Heart Rate",
+            unit: "BPM",
+            value: { $0.averageHeartRate },
+            emptyMessage: nil
+        ),
+        WorkoutMetric(
+            id: "maxHeartRate",
+            title: "Max Heart Rate",
+            unit: "BPM",
+            value: { $0.maxHeartRate },
+            emptyMessage: nil
+        )
+    ]
 }
 
 struct RunningSelectionSummary: View {
@@ -553,11 +590,13 @@ struct RunningSelectionSummary: View {
             Text("Run Time: \(formatDuration(workout.durationMinutes)) min")
 
             if let value {
-                Text("\(unit): \(String(format: "%.2f", value))")
+                Text(unit == "min/mi"
+                     ? "Average Pace: \(formatPace(value))/mi"
+                     : "\(unit): \(String(format: "%.2f", value))")
                     .font(.headline)
             }
 
-            if let pace = workout.averagePaceSecondsPerMile {
+            if unit != "min/mi", let pace = workout.averagePaceSecondsPerMile {
                 Text("Pace: \(formatPace(pace))/mi")
             }
 

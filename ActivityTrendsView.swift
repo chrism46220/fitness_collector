@@ -39,6 +39,7 @@ struct WorkoutMetric: Identifiable {
     let title: String
     let unit: String
     let value: (WorkoutRow) -> Double?
+    var emptyMessage: String? = nil
 
     func plottableWorkouts(in workouts: [WorkoutRow]) -> [WorkoutRow] {
         workouts.filter { value($0)?.isFinite == true }
@@ -172,6 +173,7 @@ struct ActivityTrendsView<SelectionSummary: View>: View {
                                         visibleDateRange: visibleDateRange,
                                         isScrollEnabled: scrollMode,
                                         interactionID: "\(category.rawValue)-\(chartRange.rawValue)",
+                                        emptyMessage: metric.emptyMessage,
                                         selectionSummary: selectionSummary
                                     )
                                 }

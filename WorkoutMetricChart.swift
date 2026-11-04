@@ -66,7 +66,7 @@ struct WorkoutMetricChart<SelectionSummary: View>: View {
 
                 HStack(alignment: .top, spacing: yAxisSpacing) {
                     yAxisColumn()
-                        .opacity(emptyMessage != nil && workouts.isEmpty ? 0 : 1)
+                        .opacity(emptyMessage != nil && visibleWorkouts.isEmpty ? 0 : 1)
                     chartBody(width: availablePlotWidth)
                         .frame(width: availablePlotWidth, height: chartHeight)
                 }
@@ -132,13 +132,22 @@ struct WorkoutMetricChart<SelectionSummary: View>: View {
         ChartGeometry.tickValues(in: yDomain(), tickCount: tickCount ?? self.yAxisTickCount)
     }
 
-    private func formatAxisTick(_ value: Double) -> String {
+    func formatAxisTick(_ value: Double) -> String {
         if unit.lowercased().contains("bpm") {
             return String(format: "%.0f", value)
         }
 
         if unit.lowercased().contains("mile") || unit == "Minutes" {
             return String(format: "%.1f", value)
+        }
+
+        if unit.lowercased() == "min/mi" {
+            // guard against non‑finite or overflow values
+            if value.isFinite && value >= 0 && value < Double(Int.max) {
+                return formatPace(value)
+            } else {
+                return "—"
+            }
         }
 
         return String(format: "%.0f", value)
@@ -166,7 +175,7 @@ struct WorkoutMetricChart<SelectionSummary: View>: View {
         }
         .chartOverlay { proxy in
             GeometryReader { geo in
-                if workouts.isEmpty, let emptyMessage {
+                if visibleWorkouts.isEmpty, let emptyMessage {
                     Text(emptyMessage)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
