@@ -42,7 +42,19 @@ struct WorkoutRow: Identifiable {
 }
 
 final class HealthKitManager: ObservableObject {
-    private let healthStore = HKHealthStore()
+    private let healthStore: HKHealthStore
+    private let connectionClient: any HealthKitConnectionClient
+
+    /// Injectable transport keeps permission/lifecycle regressions testable without
+    /// claiming that simulator fixtures prove real-device Health read access.
+    init(connectionClient: (any HealthKitConnectionClient)? = nil) {
+        let store = HKHealthStore()
+        healthStore = store
+        self.connectionClient = connectionClient ?? LiveHealthKitConnectionClient(healthStore: store)
+    }
+
+    /// Coalesces launch, foreground, refresh and explicit setup while in flight.
+    @Published private(set) var isLoading = false
 
     /// Limit passed to the workout sample query.
     ///
@@ -63,9 +75,9 @@ final class HealthKitManager: ObservableObject {
     /// behind a disclosure so a query failure never masquerades as user guidance.
     @Published var diagnosticMessage: String?
 
-    /// True once authorization has been requested and completed successfully.
-    /// Distinguishes "never connected" from "connected but no workouts", which
-    /// need different empty-state copy.
+    /// Health setup has been completed (including a decision to deny reads).
+    /// HealthKit deliberately does not expose whether read access was granted.
+    /// Reconciled from HealthKit on each launch, not inferred from write status.
     @Published var hasRequestedAccess: Bool = false
 
     @Published var heartRateSamples: [HeartRateSample] = []
@@ -106,106 +118,116 @@ final class HealthKitManager: ObservableObject {
         return "Apple Health could not return this data. Try again, or check Health access in Settings."
     }
 
-    func requestAccessAndLoadWorkouts() {
-        guard HKHealthStore.isHealthDataAvailable() else {
-            statusMessage = "Health data is not available on this device."
-            diagnosticMessage = nil
-            return
-        }
-
-        var readTypes: Set<HKObjectType> = [
-            HKObjectType.workoutType(),
-            HKSeriesType.workoutRoute()
-        ]
-
-        // Optional quantity types are added only when the device reports them.
-        // Force-unwrapping these identifiers crashes or silently misbehaves on
-        // devices/OS versions where a type is unavailable.
+    /// The same read set must be used for setup discovery and explicit setup.
+    private var readTypes: Set<HKObjectType> {
+        var types: Set<HKObjectType> = [.workoutType(), HKSeriesType.workoutRoute()]
         for identifier: HKQuantityTypeIdentifier in [
-            .heartRate,
-            .activeEnergyBurned,
-            .basalEnergyBurned,
-            .distanceWalkingRunning,
-            .distanceCycling,
-            .distanceSwimming,
-            .distanceWheelchair,
-            .distanceDownhillSnowSports
+            .heartRate, .activeEnergyBurned, .basalEnergyBurned,
+            .distanceWalkingRunning, .distanceCycling, .distanceSwimming,
+            .distanceWheelchair, .distanceDownhillSnowSports
         ] {
             if let type = HKQuantityType.quantityType(forIdentifier: identifier) {
-                readTypes.insert(type)
+                types.insert(type)
             }
         }
+        return types
+    }
 
+    private func canStartConnection() -> Bool {
+        guard !isLoading else { return false }
+        guard connectionClient.isHealthDataAvailable() else {
+            statusMessage = "Health data is not available on this device."
+            diagnosticMessage = nil
+            return false
+        }
         diagnosticMessage = nil
-        statusMessage = "Requesting Health access..."
+        isLoading = true
+        return true
+    }
 
-        healthStore.requestAuthorization(toShare: [], read: readTypes) { [weak self] success, error in
+    /// Discover completed Health setup on launch/foreground, without presenting
+    /// permission UI. An unnecessary request does not imply read access granted.
+    func refreshIfConnected() {
+        guard canStartConnection() else { return }
+        statusMessage = "Checking Apple Health..."
+        connectionClient.authorizationRequestStatus(for: readTypes) { [weak self] status, error in
             DispatchQueue.main.async {
-                guard let self = self else { return }
-
-                if let error = error {
-                    self.hasRequestedAccess = true
+                guard let self else { return }
+                if let error {
+                    self.isLoading = false
                     self.diagnosticMessage = error.localizedDescription
-                    self.statusMessage = "Apple Health access failed. Tap to try again."
+                    self.statusMessage = "Could not check Apple Health setup. Try again, or check Health access in Settings."
                     return
                 }
-
-                self.hasRequestedAccess = true
-
-                if success {
+                switch status {
+                case .unnecessary:
+                    self.hasRequestedAccess = true
                     self.loadWorkouts()
-                } else {
-                    self.statusMessage = "Health access was not granted."
+                case .shouldRequest:
+                    self.isLoading = false
+                    self.hasRequestedAccess = false
+                    self.statusMessage = "Connect to Apple Health to load your workouts."
+                case .unknown:
+                    self.isLoading = false
+                    self.statusMessage = "Apple Health setup could not be determined. Tap to try again."
+                @unknown default:
+                    self.isLoading = false
+                    self.statusMessage = "Apple Health setup could not be determined. Tap to try again."
                 }
+            }
+        }
+    }
+
+    /// Only a deliberate Connect action may initiate a permission request.
+    func requestAccessAndLoadWorkouts() {
+        guard canStartConnection() else { return }
+        statusMessage = "Requesting Health access..."
+        connectionClient.requestReadAuthorization(for: readTypes) { [weak self] completed, error in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if let error {
+                    self.isLoading = false
+                    self.diagnosticMessage = error.localizedDescription
+                    self.statusMessage = "Apple Health setup failed. Tap to try again."
+                    return
+                }
+                guard completed else {
+                    self.isLoading = false
+                    self.statusMessage = "Apple Health setup was not completed. Tap to try again."
+                    return
+                }
+                // Completion records a decision, including denied reads.
+                self.hasRequestedAccess = true
+                self.loadWorkouts()
             }
         }
     }
 
     private func loadWorkouts() {
         statusMessage = "Loading workouts..."
-
-        let query = HKSampleQuery(
-            sampleType: .workoutType(),
-            predicate: nil,
-            limit: HealthKitManager.workoutQueryLimit,
-            sortDescriptors: [
-                NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)
-            ]
-        ) { [weak self] _, samples, error in
-
+        connectionClient.fetchWorkouts(limit: Self.workoutQueryLimit) { [weak self] samples, error in
             DispatchQueue.main.async {
-                guard let self = self else { return }
-
-                // A nil sample array is a query failure, not an empty library.
-                // Handle it before the type cast so the distinction survives.
-                if let error = error {
+                guard let self else { return }
+                self.isLoading = false
+                if let error {
                     self.diagnosticMessage = error.localizedDescription
-                    self.statusMessage = HealthKitManager.userFacingMessage(for: error)
+                    self.statusMessage = Self.userFacingMessage(for: error)
                     self.workouts = []
                     return
                 }
-
                 guard let hkWorkouts = samples as? [HKWorkout] else {
                     self.workouts = []
                     self.statusMessage = "Apple Health did not return workout data."
                     self.diagnosticMessage = "HKSampleQuery returned a non-workout sample array."
                     return
                 }
-
                 self.diagnosticMessage = nil
-
-                // An empty result is a valid state for a user with no recorded
-                // workouts. Clear the published list so stale rows never linger
-                // behind an "empty" message, and let the overview render its
-                // empty state from the now-empty workout array.
                 if hkWorkouts.isEmpty {
                     self.workouts = []
-                    self.statusMessage = "No workouts found in Apple Health yet."
+                    self.statusMessage = "No workouts found. If you expect workouts, check this app’s read access in Health settings."
                     return
                 }
-
                 let energyType = HKQuantityType(.activeEnergyBurned)
-
                 self.workouts = hkWorkouts.map { workout in
                     WorkoutRow(
                         id: workout.uuid,
@@ -213,25 +235,17 @@ final class HealthKitManager: ObservableObject {
                         activityType: workout.workoutActivityType,
                         start: workout.startDate,
                         durationMinutes: workout.duration / 60.0,
-                        calories: workout
-                            .statistics(for: energyType)?
-                            .sumQuantity()?
-                            .doubleValue(for: .kilocalorie()),
+                        calories: workout.statistics(for: energyType)?.sumQuantity()?.doubleValue(for: .kilocalorie()),
                         distanceMiles: workout.totalDistance?.doubleValue(for: .mile()),
                         averageHeartRate: nil,
                         maxHeartRate: nil
                     )
                 }
-
                 let runCount = hkWorkouts.filter { $0.workoutActivityType == .running }.count
                 self.statusMessage = "Loaded \(hkWorkouts.count) workouts (\(runCount) running)."
-                self.diagnosticMessage = nil
-
                 self.fetchHeartRates(for: hkWorkouts)
             }
         }
-
-        healthStore.execute(query)
     }
 
     private func fetchHeartRates(for hkWorkouts: [HKWorkout]) {

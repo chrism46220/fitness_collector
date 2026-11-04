@@ -13,10 +13,19 @@ struct FitnessCollectorApp: App {
     /// and loading; activity views observe the same instance rather than each
     /// running their own HealthKit queries.
     @StateObject private var health = HealthKitManager()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
             FitnessOverviewView(health: health)
+                .task {
+                    health.refreshIfConnected()
+                }
+                .onChange(of: scenePhase) { _, phase in
+                    if phase == .active {
+                        health.refreshIfConnected()
+                    }
+                }
         }
     }
 }

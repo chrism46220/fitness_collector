@@ -76,7 +76,7 @@ struct FitnessOverviewView: View {
             }
             .navigationTitle("Fitness")
             .refreshable {
-                health.requestAccessAndLoadWorkouts()
+                health.refreshIfConnected()
             }
         }
     }
@@ -93,17 +93,19 @@ private struct EmptyStatePanel: View {
     @ObservedObject var health: HealthKitManager
 
     private var title: String {
-        health.hasRequestedAccess ? "No workouts yet" : "Connect Apple Health"
+        if health.isLoading { return "Loading Apple Health" }
+        return health.hasRequestedAccess ? "No workouts yet" : "Connect Apple Health"
     }
 
     private var explainer: String {
         health.hasRequestedAccess
-            ? "Fitness reads workouts already recorded by Apple Watch or the Health app. Nothing has been found yet."
+            ? "Fitness reads workouts recorded by Apple Watch or the Health app. If workouts are missing, check this app’s read access in Health settings."
             : "Fitness reads the workouts Apple Health already has on this device. Nothing is uploaded or shared."
     }
 
     private var primaryActionTitle: String {
-        health.hasRequestedAccess ? "Reload Workouts" : "Connect to Apple Health"
+        if health.isLoading { return "Loading…" }
+        return health.hasRequestedAccess ? "Reload Workouts" : "Connect to Apple Health"
     }
 
     var body: some View {
@@ -128,9 +130,14 @@ private struct EmptyStatePanel: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             Button(primaryActionTitle) {
-                health.requestAccessAndLoadWorkouts()
+                if health.hasRequestedAccess {
+                    health.refreshIfConnected()
+                } else {
+                    health.requestAccessAndLoadWorkouts()
+                }
             }
             .buttonStyle(.borderedProminent)
+            .disabled(health.isLoading)
 
             if let diagnostic = health.diagnosticMessage {
                 DisclosureGroup("Technical details") {
