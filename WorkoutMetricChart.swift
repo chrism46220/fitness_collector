@@ -9,10 +9,8 @@ struct WorkoutMetricChart<SelectionSummary: View>: View {
     let value: (WorkoutRow) -> Double?
     let onSelectWorkout: (WorkoutRow) -> Void
     let workoutNoun: String
-    let activityDates: [Date]
     let fullDateRange: ClosedRange<Date>
     @Binding var visibleDateRange: ClosedRange<Date>
-    @Binding var isScrollEnabled: Bool
     var interactionID = ""
     var emptyMessage: String? = nil
     @ViewBuilder let selectionSummary: (WorkoutRow, String, Double?) -> SelectionSummary
@@ -42,22 +40,6 @@ struct WorkoutMetricChart<SelectionSummary: View>: View {
                         .padding(.vertical, 3)
                         .background(Color(.secondarySystemBackground))
                         .clipShape(Capsule())
-                }
-
-                HStack {
-                    Spacer()
-
-                    Picker("Scroll", selection: Binding(get: { isScrollEnabled }, set: { enabled in
-                        isScrollEnabled = enabled
-                        visibleDateRange = enabled
-                            ? ChartViewport.recentDetail(in: fullDateRange, dates: activityDates, width: measuredPlotWidth ?? 280)
-                            : fullDateRange
-                    })) {
-                        Text("Scroll Off").tag(false)
-                        Text("Scroll On").tag(true)
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(width: 168)
                 }
             }
 
@@ -189,7 +171,6 @@ struct WorkoutMetricChart<SelectionSummary: View>: View {
                         visible: $visibleDateRange, bounds: fullDateRange, interactionID: interactionID,
                         onReset: {
                             selectedWorkoutID = nil
-                            isScrollEnabled = false
                             visibleDateRange = fullDateRange
                         },
                         onTap: { fraction in

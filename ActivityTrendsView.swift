@@ -77,7 +77,8 @@ struct ActivityTrendsView<SelectionSummary: View>: View {
         ChartViewportContext(category: category.rawValue, preset: chartRange.rawValue,
                              extent: showsEmptyRangeCharts && chartWorkouts.isEmpty
                                 ? chartRange.emptyDateBounds(now: emptyRangeReferenceDate)
-                                : ChartViewport.bounds(for: chartWorkouts.map(\.start)))
+                                : ChartViewport.bounds(for: chartWorkouts.map(\.start)),
+                             activityDates: Array(Set(chartWorkouts.map(\.start))).sorted())
     }
 
     private var currentViewport: ChartViewportState {
@@ -90,14 +91,6 @@ struct ActivityTrendsView<SelectionSummary: View>: View {
         Binding(get: { currentViewport.visible }, set: { range in
             var state = currentViewport
             state.visible = ChartViewport.clamp(range, to: viewportContext.extent)
-            viewport = state
-        })
-    }
-
-    private var scrollMode: Binding<Bool> {
-        Binding(get: { currentViewport.scrollEnabled }, set: { enabled in
-            var state = currentViewport
-            state.scrollEnabled = enabled
             viewport = state
         })
     }
@@ -133,10 +126,8 @@ struct ActivityTrendsView<SelectionSummary: View>: View {
                                     value: metric.value,
                                     onSelectWorkout: { selectedWorkout = $0 },
                                     workoutNoun: workoutNoun,
-                                    activityDates: [],
                                     fullDateRange: viewportContext.extent,
                                     visibleDateRange: visibleDateRange,
-                                    isScrollEnabled: scrollMode,
                                     interactionID: "\(category.rawValue)-\(chartRange.rawValue)",
                                     emptyMessage: emptyRangeMessage,
                                     selectionSummary: selectionSummary
@@ -168,10 +159,8 @@ struct ActivityTrendsView<SelectionSummary: View>: View {
                                         value: metric.value,
                                         onSelectWorkout: { selectedWorkout = $0 },
                                         workoutNoun: workoutNoun,
-                                        activityDates: chartWorkouts.map(\.start),
                                         fullDateRange: viewportContext.extent,
                                         visibleDateRange: visibleDateRange,
-                                        isScrollEnabled: scrollMode,
                                         interactionID: "\(category.rawValue)-\(chartRange.rawValue)",
                                         emptyMessage: metric.emptyMessage,
                                         selectionSummary: selectionSummary

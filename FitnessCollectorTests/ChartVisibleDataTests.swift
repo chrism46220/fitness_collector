@@ -15,8 +15,8 @@ final class ChartVisibleDataTests: XCTestCase {
     private func chart(_ rows: [WorkoutRow], visible: ClosedRange<Date>) -> WorkoutMetricChart<EmptyView> {
         WorkoutMetricChart(title: "HR", unit: "bpm", workouts: rows, chartRange: .all,
                            value: \.averageHeartRate, onSelectWorkout: { _ in }, workoutNoun: "run",
-                           activityDates: rows.map(\.start), fullDateRange: ChartViewport.bounds(for: rows.map(\.start)),
-                           visibleDateRange: .constant(visible), isScrollEnabled: .constant(false),
+                           fullDateRange: ChartViewport.bounds(for: rows.map(\.start)),
+                           visibleDateRange: .constant(visible),
                            selectionSummary: { _, _, _ in EmptyView() })
     }
 

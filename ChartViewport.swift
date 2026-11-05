@@ -69,33 +69,30 @@ struct ChartViewportContext: Equatable {
     let category: String
     let preset: String
     let extent: ClosedRange<Date>
+    var activityDates: [Date] = []
 }
 
 struct ChartViewportState {
     var context: ChartViewportContext
     var visible: ClosedRange<Date>
-    var scrollEnabled = false
 
     init(context: ChartViewportContext) {
         self.context = context
-        visible = context.extent
+        visible = ChartViewport.recentDetail(in: context.extent, dates: context.activityDates, width: 280)
     }
 
     mutating func reconcile(_ next: ChartViewportContext) {
         guard next != context else { return }
         if next.category != context.category || next.preset != context.preset || !ChartViewport.isZoomed(visible, in: context.extent) {
-            visible = next.extent
-            scrollEnabled = false
+            visible = ChartViewport.recentDetail(in: next.extent, dates: next.activityDates, width: 280)
         } else {
             visible = ChartViewport.clamp(visible, to: next.extent)
         }
         context = next
-        if !ChartViewport.isZoomed(visible, in: next.extent) { scrollEnabled = false }
     }
 
     mutating func reset() {
         visible = context.extent
-        scrollEnabled = false
     }
 }
 

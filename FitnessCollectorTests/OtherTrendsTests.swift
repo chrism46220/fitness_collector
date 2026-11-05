@@ -63,10 +63,8 @@ final class OtherTrendsTests: XCTestCase {
             value: metric.value,
             onSelectWorkout: { _ in },
             workoutNoun: "session",
-            activityDates: plotted.map(\.start),
             fullDateRange: ChartViewport.bounds(for: plotted.map(\.start)),
             visibleDateRange: .constant(now.addingTimeInterval(-7 * 86_400)...now),
-            isScrollEnabled: .constant(false),
             selectionSummary: { w, u, v in LiftingSelectionSummary(workout: w, unit: u, value: v) }
         )
         XCTAssertEqual(plotted.map(\.id), [measured.id, outside.id])

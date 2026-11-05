@@ -16,8 +16,8 @@ final class RunningAveragePaceTests: XCTestCase {
     private func chart(rows: [WorkoutRow], unit: String = "min/mi") -> WorkoutMetricChart<RunningSelectionSummary> {
         let bounds = ChartViewport.bounds(for: rows.map(\.start))
         return WorkoutMetricChart(title: "Average Pace", unit: unit, workouts: rows, chartRange: .all,
-            value: pace.value, onSelectWorkout: { _ in }, workoutNoun: "run", activityDates: rows.map(\.start),
-            fullDateRange: bounds, visibleDateRange: .constant(bounds), isScrollEnabled: .constant(false),
+            value: pace.value, onSelectWorkout: { _ in }, workoutNoun: "run",
+            fullDateRange: bounds, visibleDateRange: .constant(bounds),
             emptyMessage: pace.emptyMessage,
             selectionSummary: { RunningSelectionSummary(workout: $0, unit: $1, value: $2) })
     }

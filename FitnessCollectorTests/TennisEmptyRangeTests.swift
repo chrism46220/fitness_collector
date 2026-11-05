@@ -34,8 +34,8 @@ final class TennisEmptyRangeTests: XCTestCase {
             let chart = WorkoutMetricChart(
                 title: metric.title, unit: metric.unit, workouts: [], chartRange: .seven,
                 value: metric.value, onSelectWorkout: { _ in XCTFail("Empty chart selected a workout") },
-                workoutNoun: "session", activityDates: [], fullDateRange: bounds,
-                visibleDateRange: .constant(bounds), isScrollEnabled: .constant(false),
+                workoutNoun: "session", fullDateRange: bounds,
+                visibleDateRange: .constant(bounds),
                 emptyMessage: "No tennis sessions in this range.",
                 selectionSummary: { _, _, _ in EmptyView() }
             )

@@ -88,10 +88,8 @@ final class ChartViewportTests: XCTestCase {
         for preset in ["7D", "30D", "90D", "All"] {
             var state = ChartViewportState(context: context("previous"))
             state.visible = range(10, 20)
-            state.scrollEnabled = true
             state.reconcile(context(preset, extent: range(5, 75)))
             assertRange(state.visible, 5, 75)
-            XCTAssertFalse(state.scrollEnabled)
         }
         var state = ChartViewportState(context: context())
         state.visible = range(10, 20)
@@ -99,13 +97,11 @@ final class ChartViewportTests: XCTestCase {
         assertRange(state.visible, 0, 100)
     }
 
-    func testSameExtentDuringHeartRateEnrichmentPreservesViewportAndMode() {
+    func testSameExtentDuringHeartRateEnrichmentPreservesViewport() {
         var state = ChartViewportState(context: context())
         state.visible = range(10, 20)
-        state.scrollEnabled = true
         state.reconcile(context())
         assertRange(state.visible, 10, 20)
-        XCTAssertTrue(state.scrollEnabled)
     }
 
     func testExtentChangesClampZoomAndExpandFullRange() {
@@ -120,13 +116,39 @@ final class ChartViewportTests: XCTestCase {
         assertRange(state.visible, -20, 150)
     }
 
-    func testResetRestoresCurrentPresetAndClearsScrollMode() {
+    func testResetRestoresCurrentPreset() {
         var state = ChartViewportState(context: context("7D", extent: range(0, 7)))
         state.visible = range(3, 5)
-        state.scrollEnabled = true
         state.reset()
         assertRange(state.visible, 0, 7)
-        XCTAssertFalse(state.scrollEnabled)
+    }
+
+    func testAllCategoriesStartWithScrollableRecentDetailWithoutToggle() {
+        let dates = (0...100).map { date(Double($0)) }
+        for category in ["running", "lifting", "tennis", "other"] {
+            let ctx = ChartViewportContext(category: category, preset: "All",
+                                           extent: range(0, 100), activityDates: dates)
+            let state = ChartViewportState(context: ctx)
+            assertRange(state.visible, 97, 100)
+            XCTAssertTrue(ChartViewport.isZoomed(state.visible, in: ctx.extent))
+            let dragged = ChartViewport.pan(state.visible, in: ctx.extent, translation: 280, width: 280)
+            assertRange(dragged, 94, 97)
+        }
+    }
+
+    func testPresetChangesStartWithScrollableDetailAndSparseDataStaysUsable() {
+        var state = ChartViewportState(context: context())
+        state.visible = range(10, 20)
+        state.reconcile(ChartViewportContext(category: "running", preset: "30D",
+                                            extent: range(0, 30),
+                                            activityDates: (0...30).map { date(Double($0)) }))
+        assertRange(state.visible, 27, 30)
+        let sparse = ChartViewportContext(category: "tennis", preset: "7D",
+                                          extent: range(0, 7), activityDates: [date(0), date(7)])
+        state.reconcile(sparse)
+        assertRange(state.visible, 0, 7)
+        state.reconcile(ChartViewportContext(category: "tennis", preset: "empty", extent: range(0, 7)))
+        assertRange(state.visible, 0, 7)
     }
 
     func testRecentDetailUsesDistinctDatesAndAvailableWidth() {
