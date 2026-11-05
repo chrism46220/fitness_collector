@@ -3,7 +3,7 @@ import SwiftUI
 import UIKit
 @testable import FitnessCollector
 
-/// Hosted bridge integration; real multi-touch synthesis still requires a simulator UI pass.
+/// Hosted bridge integration; real multi-touch still requires a physical-device pass.
 @MainActor
 final class ChartGestureIntegrationTests: XCTestCase {
     private let bounds = Date(timeIntervalSince1970: 0)...Date(timeIntervalSince1970: 100 * 86_400)
@@ -31,6 +31,40 @@ final class ChartGestureIntegrationTests: XCTestCase {
         XCTAssertEqual(coordinator.recognizers.count, 4)
         XCTAssertEqual(coordinator.pan.maximumNumberOfTouches, 1)
         XCTAssertEqual(coordinator.doubleTap.numberOfTapsRequired, 2)
+    }
+
+    func testNestedChartScrollContainersStillShareTheOuterListHost() {
+        let (window, list, firstProbe, first) = fixture()
+        let firstInner = UIScrollView(frame: CGRect(x: 0, y: 0, width: 400, height: 320))
+        let secondInner = UIScrollView(frame: CGRect(x: 0, y: 320, width: 400, height: 320))
+        list.addSubview(firstInner)
+        list.addSubview(secondInner)
+        firstInner.addSubview(firstProbe)
+        first.attach(to: firstProbe)
+        let secondProbe = ChartPlotGestures.PlotProbe(frame: CGRect(x: 60, y: 80, width: 280, height: 180))
+        secondProbe.isUserInteractionEnabled = false
+        secondInner.addSubview(secondProbe)
+        let second = ChartPlotGestures.Coordinator(first.parent)
+        second.attach(to: secondProbe)
+        defer { second.detach(); first.detach(); window.isHidden = true }
+        XCTAssertTrue(first.host === list)
+        XCTAssertTrue(second.host === list)
+        XCTAssertTrue(first.scrollView === list)
+        let points = [CGPoint(x: 200, y: 190), CGPoint(x: 200, y: 490)]
+        XCTAssertTrue(first.acceptsPinchTouch(at: points[1], in: list))
+        XCTAssertTrue(first.ownsPinch(at: points, in: list))
+        XCTAssertFalse(second.ownsPinch(at: points, in: list))
+    }
+
+    func testPinchCanCoexistWithInternalSwiftUIOrChartRecognizers() {
+        let (window, _, probe, coordinator) = fixture()
+        defer { coordinator.detach(); window.isHidden = true }
+        let internalPan = UIPanGestureRecognizer()
+        probe.addGestureRecognizer(internalPan)
+        XCTAssertTrue(coordinator.gestureRecognizer(coordinator.pinch,
+                                                   shouldRecognizeSimultaneouslyWith: internalPan))
+        XCTAssertFalse(coordinator.gestureRecognizer(coordinator.pan,
+                                                    shouldRecognizeSimultaneouslyWith: internalPan))
     }
 
     func testPlotBoundsExcludeAxesAndControlsAndClipScrolledOffPlot() {

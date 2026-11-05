@@ -95,10 +95,13 @@ struct ChartPlotGestures: UIViewRepresentable {
             var ancestor = probe.superview
             var scroll: UIScrollView?
             while let view = ancestor {
-                if let candidate = view as? UIScrollView { scroll = candidate; break }
+                // Charts may contain their own internal scroll containers. The
+                // outermost scroll view is the shared List, not a per-chart host.
+                if let candidate = view as? UIScrollView { scroll = candidate }
                 ancestor = view.superview
             }
-            guard let target: UIView = scroll ?? probe.window, target !== host else { return }
+            guard let target: UIView = scroll ?? probe.window else { return }
+            if target === host { scrollView = scroll; return }
             detach()
             host = target
             scrollView = scroll
@@ -210,9 +213,12 @@ struct ChartPlotGestures: UIViewRepresentable {
 
         func gestureRecognizer(_ recognizer: UIGestureRecognizer,
                                shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
-            (recognizer === pinch && (other === scrollView?.panGestureRecognizer
-                || pinchPeers.contains { other === $0.pan }))
-                || (recognizer === pan && pinchPeers.contains { other === $0.pinch })
+            // SwiftUI/Charts can install additional recognizers between the
+            // plot and the List. Let the pinch survive those recognizers too,
+            // rather than allowing an internal pan to prevent it from beginning.
+            // Matching peer pinches still elect a single owner in shouldBegin.
+            if recognizer === pinch { return true }
+            return recognizer === pan && pinchPeers.contains { other === $0.pinch }
         }
 
         @objc func pinched() {
