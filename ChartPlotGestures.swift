@@ -9,6 +9,9 @@ struct ChartPlotGestures: UIViewRepresentable {
     @Binding var visible: ClosedRange<Date>
     let bounds: ClosedRange<Date>
     var interactionID = ""
+    /// In plot-local coordinates. Pinch may begin on either axis; workout taps
+    /// and horizontal drags still use only the plot's exact bounds.
+    var pinchRegion: CGRect? = nil
     let onReset: () -> Void
     let onTap: (Double) -> Void
 
@@ -134,9 +137,17 @@ struct ChartPlotGestures: UIViewRepresentable {
         }
 
         func contains(_ location: CGPoint) -> Bool {
+            contains(location, in: probe?.bounds ?? .zero)
+        }
+
+        func containsPinchTouch(_ location: CGPoint) -> Bool {
+            contains(location, in: parent.pinchRegion ?? probe?.bounds ?? .zero)
+        }
+
+        private func contains(_ location: CGPoint, in region: CGRect) -> Bool {
             guard let probe, let window = probe.window, !probe.isHidden,
                   probe.bounds.width > 0, probe.bounds.height > 0,
-                  probe.bounds.contains(location) else { return false }
+                  region.contains(location) else { return false }
             let point = probe.convert(location, to: window)
             if let scrollView, !scrollView.bounds.contains(window.convert(point, to: scrollView)) { return false }
             return window.bounds.contains(point)
@@ -157,7 +168,7 @@ struct ChartPlotGestures: UIViewRepresentable {
         func acceptsPinchTouch(at point: CGPoint, in view: UIView) -> Bool {
             pinchPeers.contains { peer in
                 guard let probe = peer.probe else { return false }
-                return peer.contains(probe.convert(point, from: view))
+                return peer.containsPinchTouch(probe.convert(point, from: view))
             }
         }
 
@@ -168,7 +179,7 @@ struct ChartPlotGestures: UIViewRepresentable {
                   points.allSatisfy({ acceptsPinchTouch(at: $0, in: view) }),
                   let first = points.min(by: { $0.y == $1.y ? $0.x < $1.x : $0.y < $1.y })
             else { return false }
-            return contains(probe.convert(first, from: view))
+            return containsPinchTouch(probe.convert(first, from: view))
         }
 
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {

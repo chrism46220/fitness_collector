@@ -22,6 +22,52 @@ final class ChartGestureIntegrationTests: XCTestCase {
         return (window, scroll, probe, coordinator)
     }
 
+    func testActualSwiftUIChartLayoutAdmitsPinchOnDateLabels() async throws {
+        let chart = { (title: String) in
+            WorkoutMetricChart(
+                title: title, unit: "bpm", workouts: [], chartRange: .all,
+                value: { _ in nil }, onSelectWorkout: { _ in }, workoutNoun: "workout",
+                fullDateRange: self.bounds, visibleDateRange: .constant(self.bounds),
+                interactionID: "layout-regression", selectionSummary: { _, _, _ in EmptyView() })
+        }
+        let controller = UIHostingController(rootView: List {
+            chart("First metric")
+            chart("Second metric")
+        })
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 400, height: 850))
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil }
+        func probes(in view: UIView) -> [ChartPlotGestures.PlotProbe] {
+            (view as? ChartPlotGestures.PlotProbe).map { [$0] } ?? view.subviews.flatMap { probes(in: $0) }
+        }
+        var plots: [ChartPlotGestures.PlotProbe] = []
+        for _ in 0..<30 {
+            controller.view.layoutIfNeeded()
+            plots = probes(in: controller.view).filter { $0.bounds.height > 0 }
+            if plots.count == 2 { break }
+            try await Task.sleep(for: .milliseconds(30))
+        }
+        XCTAssertEqual(plots.count, 2, "Exercise the actual List/Chart overlay, not synthetic plot rectangles")
+        guard plots.count == 2 else { return }
+        let plot = plots[0]
+        var ancestor = plot.superview
+        var coordinator: ChartPlotGestures.Coordinator?
+        while let view = ancestor {
+            coordinator = view.gestureRecognizers?.compactMap { $0.delegate as? ChartPlotGestures.Coordinator }
+                .first { $0.probe === plot }
+            if coordinator != nil { break }
+            ancestor = view.superview
+        }
+        let bridge = try XCTUnwrap(coordinator)
+        let dateLabel = CGPoint(x: plot.bounds.midX, y: plot.bounds.maxY + 8)
+        XCTAssertFalse(bridge.contains(dateLabel), "Date labels are not workout tap targets")
+        XCTAssertTrue(bridge.acceptsPinchTouch(at: dateLabel, in: plot), "The production chart must include its date labels in pinch hit testing")
+        let touches = [plot.convert(dateLabel, to: window),
+                       plots[1].convert(CGPoint(x: plots[1].bounds.midX, y: plots[1].bounds.midY), to: window)]
+        XCTAssertTrue(bridge.ownsPinch(at: touches, in: window))
+    }
+
     func testProbePassesHitTestingAndRecognizersAttachToListAncestor() {
         let (window, scroll, probe, coordinator) = fixture()
         defer { coordinator.detach(); window.isHidden = true }
@@ -150,6 +196,24 @@ final class ChartGestureIntegrationTests: XCTestCase {
         secondProbe.isHidden = false
         scroll.contentOffset.y = 600
         XCTAssertFalse(coordinator.acceptsPinchTouch(at: CGPoint(x: 200, y: 490), in: scroll))
+    }
+
+    func testPinchIncludesGraphAxesWithoutMakingThemWorkoutTapTargets() {
+        let (window, scroll, _, coordinator) = fixture()
+        coordinator.parent.pinchRegion = CGRect(x: -48, y: 0, width: 328, height: 220)
+        let (_, second) = sibling(in: scroll, matching: coordinator)
+        defer { second.detach(); coordinator.detach(); window.isHidden = true }
+        let dateAxis = CGPoint(x: 200, y: 300)
+        let valueAxis = CGPoint(x: 35, y: 490)
+        XCTAssertTrue(coordinator.acceptsPinchTouch(at: dateAxis, in: scroll))
+        XCTAssertTrue(coordinator.acceptsPinchTouch(at: valueAxis, in: scroll))
+        XCTAssertFalse(coordinator.contains(CGPoint(x: 140, y: 200)), "Date labels must not select workouts")
+        XCTAssertFalse(second.contains(CGPoint(x: -25, y: 90)), "Value labels must not select workouts")
+        XCTAssertTrue(coordinator.ownsPinch(at: [dateAxis, valueAxis], in: scroll))
+        XCTAssertFalse(second.ownsPinch(at: [dateAxis, valueAxis], in: scroll))
+        XCTAssertFalse(coordinator.acceptsPinchTouch(at: CGPoint(x: 200, y: 350), in: scroll), "Gap between graphs stays excluded")
+        scroll.contentOffset.y = 600
+        XCTAssertFalse(coordinator.acceptsPinchTouch(at: valueAxis, in: scroll), "Offscreen axes stay excluded")
     }
 
     func testCrossPlotPinchHasExactlyOneOwnerRegardlessOfTouchOrder() {

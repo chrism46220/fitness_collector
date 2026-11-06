@@ -169,6 +169,12 @@ struct WorkoutMetricChart<SelectionSummary: View>: View {
                     let frame = geo[plotFrame]
                     ChartPlotGestures(
                         visible: $visibleDateRange, bounds: fullDateRange, interactionID: interactionID,
+                        pinchRegion: CGRect(
+                            x: -frame.minX - yAxisWidth - yAxisSpacing,
+                            y: -frame.minY,
+                            width: geo.size.width + yAxisWidth + yAxisSpacing,
+                            height: geo.size.height
+                        ),
                         onReset: {
                             selectedWorkoutID = nil
                             visibleDateRange = fullDateRange
