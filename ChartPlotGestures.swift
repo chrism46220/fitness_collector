@@ -1,10 +1,10 @@
 import SwiftUI
 import UIKit
 
-/// A non-hit-testing geometry probe. Recognizers live on the enclosing List's
-/// UIScrollView (or window when hosted outside a List), never on an overlay that
-/// could intercept scrolling. Taps and drags stay inside their own plot; pinches
-/// may span sibling plots sharing the same viewport on this scroll view.
+/// A non-hit-testing geometry probe. Plot recognizers live on the enclosing
+/// List's UIScrollView; an optional screen probe adds only a window-level pinch.
+/// Taps and drags stay plot-local. Matching probes share one pinch owner and date
+/// viewport without placing a touch-intercepting overlay above the screen.
 struct ChartPlotGestures: UIViewRepresentable {
     @Binding var visible: ClosedRange<Date>
     let bounds: ClosedRange<Date>
@@ -12,6 +12,9 @@ struct ChartPlotGestures: UIViewRepresentable {
     /// In plot-local coordinates. Pinch may begin on either axis; workout taps
     /// and horizontal drags still use only the plot's exact bounds.
     var pinchRegion: CGRect? = nil
+    /// A screen probe adds pinch only; plot taps and directional pans stay local.
+    var isScreenWide = false
+    var isEnabled = true
     let onReset: () -> Void
     let onTap: (Double) -> Void
 
@@ -59,7 +62,7 @@ struct ChartPlotGestures: UIViewRepresentable {
         private var initialScale: CGFloat = 1
         private var gestureWidth: CGFloat = 1
         private var suspendedPans: [UIPanGestureRecognizer] = []
-        private var suspendedScroll: (view: UIScrollView, wasEnabled: Bool)?
+        private var suspendedScrolls: [(view: UIScrollView, wasEnabled: Bool)] = []
 
         init(_ parent: ChartPlotGestures) {
             self.parent = parent
@@ -74,20 +77,24 @@ struct ChartPlotGestures: UIViewRepresentable {
                 recognizer.delegate = self
                 recognizer.cancelsTouchesInView = false
             }
+            pinch.cancelsTouchesInView = parent.isScreenWide
             pinch.addTarget(self, action: #selector(pinched))
             pan.addTarget(self, action: #selector(panned))
             singleTap.addTarget(self, action: #selector(tapped))
             doubleTap.addTarget(self, action: #selector(reset))
         }
 
-        var recognizers: [UIGestureRecognizer] { [pinch, pan, singleTap, doubleTap] }
+        var recognizers: [UIGestureRecognizer] { parent.isScreenWide ? [pinch] : [pinch, pan, singleTap, doubleTap] }
 
         func update(_ next: ChartPlotGestures) {
-            if parent.bounds != next.bounds || parent.interactionID != next.interactionID {
-                // A preset/extent changed mid-gesture. Discard its old snapshot.
+            if parent.bounds != next.bounds || parent.interactionID != next.interactionID || parent.isEnabled != next.isEnabled {
+                // A preset, extent, or screen visibility changed. Discard its old snapshot.
                 finishPinch()
                 panSnapshot = nil
-                for recognizer in recognizers { recognizer.isEnabled = false; recognizer.isEnabled = true }
+                for recognizer in recognizers { recognizer.isEnabled = false; recognizer.isEnabled = next.isEnabled }
+            }
+            if parent.isEnabled != next.isEnabled {
+                recognizers.forEach { $0.isEnabled = next.isEnabled }
             }
             parent = next
         }
@@ -103,12 +110,12 @@ struct ChartPlotGestures: UIViewRepresentable {
                 if let candidate = view as? UIScrollView { scroll = candidate }
                 ancestor = view.superview
             }
-            guard let target: UIView = scroll ?? probe.window else { return }
+            guard let target: UIView = parent.isScreenWide ? probe.window : (scroll ?? probe.window) else { return }
             if target === host { scrollView = scroll; return }
             detach()
             host = target
             scrollView = scroll
-            recognizers.forEach { target.addGestureRecognizer($0) }
+            recognizers.forEach { $0.isEnabled = parent.isEnabled; target.addGestureRecognizer($0) }
             // A finger on each plot must not turn into a workout tap on the
             // non-owning plot when its own pinch recognizer declines ownership.
             for peer in pinchPeers where peer !== self {
@@ -130,10 +137,9 @@ struct ChartPlotGestures: UIViewRepresentable {
         }
 
         private func restoreListScrolling() {
-            if let suspendedScroll {
-                suspendedScroll.view.isScrollEnabled = suspendedScroll.wasEnabled
-                self.suspendedScroll = nil
-            }
+            let scrolls = suspendedScrolls
+            suspendedScrolls = []
+            for scroll in scrolls { scroll.view.isScrollEnabled = scroll.wasEnabled }
         }
 
         func contains(_ location: CGPoint) -> Bool {
@@ -145,49 +151,78 @@ struct ChartPlotGestures: UIViewRepresentable {
         }
 
         private func contains(_ location: CGPoint, in region: CGRect) -> Bool {
-            guard let probe, let window = probe.window, !probe.isHidden,
+            guard parent.isEnabled, let probe, let window = probe.window, !probe.isHidden,
                   probe.bounds.width > 0, probe.bounds.height > 0,
                   region.contains(location) else { return false }
+            var ancestor: UIView? = probe
+            while let view = ancestor {
+                if view.isHidden || view.alpha < 0.01 { return false }
+                ancestor = view.superview
+            }
             let point = probe.convert(location, to: window)
             if let scrollView, !scrollView.bounds.contains(window.convert(point, to: scrollView)) { return false }
             return window.bounds.contains(point)
         }
 
-        /// Discover only peers attached to this host and sharing this date viewport.
-        /// No global registry: removing a chart also removes it from this group.
+        /// Discover through the current window, not a global registry. The screen
+        /// recognizer is an ancestor of the List-hosted chart recognizers.
         private var pinchPeers: [Coordinator] {
-            (host?.gestureRecognizers ?? []).compactMap { recognizer in
-                guard let peer = recognizer.delegate as? Coordinator,
-                      recognizer === peer.pinch, peer.host === host,
-                      peer.parent.interactionID == parent.interactionID,
-                      peer.parent.bounds == parent.bounds else { return nil }
-                return peer
+            guard let window = probe?.window else { return [] }
+            func collect(_ view: UIView) -> [Coordinator] {
+                let local = (view.gestureRecognizers ?? []).compactMap { recognizer -> Coordinator? in
+                    guard let peer = recognizer.delegate as? Coordinator,
+                          recognizer === peer.pinch, peer.parent.isEnabled,
+                          peer.parent.interactionID == parent.interactionID,
+                          peer.parent.bounds == parent.bounds else { return nil }
+                    return peer
+                }
+                return local + view.subviews.flatMap { collect($0) }
             }
+            let peers = collect(window)
+            // Unrelated Lists do not join unless an explicit screen probe covers them.
+            guard peers.contains(where: { $0.parent.isScreenWide }) else {
+                return peers.filter { $0.host === host }
+            }
+            return peers
+        }
+
+        private func containsPinchPoint(_ point: CGPoint, from view: UIView) -> Bool {
+            guard let probe else { return false }
+            return containsPinchTouch(probe.convert(point, from: view))
         }
 
         func acceptsPinchTouch(at point: CGPoint, in view: UIView) -> Bool {
             pinchPeers.contains { peer in
-                guard let probe = peer.probe else { return false }
+                guard parent.isScreenWide || !peer.parent.isScreenWide,
+                      let probe = peer.probe else { return false }
                 return peer.containsPinchTouch(probe.convert(point, from: view))
             }
         }
 
-        /// All plot recognizers see the same two touches. Only the plot containing
-        /// the uppermost touch owns the pinch, independent of touch arrival order.
+        /// Keep existing chart anchoring when both fingers are on graphs. Otherwise
+        /// exactly one screen probe owns the pinch, including gaps and workout rows.
         func ownsPinch(at points: [CGPoint], in view: UIView) -> Bool {
-            guard points.count == 2, let probe,
+            guard parent.isEnabled, points.count == 2,
                   points.allSatisfy({ acceptsPinchTouch(at: $0, in: view) }),
                   let first = points.min(by: { $0.y == $1.y ? $0.x < $1.x : $0.y < $1.y })
             else { return false }
-            return containsPinchTouch(probe.convert(first, from: view))
+            let peers = pinchPeers
+            let plots = peers.filter { !$0.parent.isScreenWide }
+            if points.allSatisfy({ point in plots.contains { $0.containsPinchPoint(point, from: view) } }) {
+                return plots.first(where: { $0.containsPinchPoint(first, from: view) }) === self
+            }
+            return peers.first(where: { peer in
+                peer.parent.isScreenWide && points.allSatisfy { peer.containsPinchPoint($0, from: view) }
+            }) === self
         }
 
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-            guard let probe, let host else { return false }
+            guard parent.isEnabled, let probe, let host else { return false }
             let accepted = gestureRecognizer === pinch
                 ? acceptsPinchTouch(at: touch.location(in: host), in: host)
                 : contains(touch.location(in: probe))
             guard accepted else { return false }
+            if parent.isScreenWide && gestureRecognizer === pinch { return true }
             // Also protects controls if this reusable bridge is ever hosted over one.
             var view = touch.view
             while let current = view, current !== host {
@@ -242,14 +277,27 @@ struct ChartPlotGestures: UIViewRepresentable {
             if state == .began {
                 // A second finger can arrive during a horizontal pan. Give the
                 // pinch a fresh snapshot and cancel the old one-finger gesture.
-                suspendedPans = pinchPeers.map(\.pan).filter(\.isEnabled)
+                suspendedPans = pinchPeers.filter { !$0.parent.isScreenWide }.map(\.pan).filter(\.isEnabled)
                 suspendedPans.forEach { $0.isEnabled = false }
                 // Pinch may coexist with an already-started List pan. Freeze only
                 // the List's native scrolling for this pinch; restore on every exit.
-                if let scrollView {
-                    suspendedScroll = (scrollView, scrollView.isScrollEnabled)
-                    scrollView.isScrollEnabled = false
+                var scrolls = pinchPeers.compactMap(\.scrollView)
+                if parent.isScreenWide, let probe, let window = probe.window {
+                    // The midpoint hits the Activity List even after its chart
+                    // cells have been recycled. Do not freeze unrelated window scrolls.
+                    let midpoint = probe.convert(CGPoint(x: probe.bounds.midX, y: probe.bounds.midY), to: window)
+                    var hit = window.hitTest(midpoint, with: nil)
+                    var list: UIScrollView?
+                    while let view = hit, view !== window {
+                        if let scroll = view as? UIScrollView { list = scroll }
+                        hit = view.superview
+                    }
+                    if let list { scrolls.append(list) }
                 }
+                var seen = Set<ObjectIdentifier>()
+                suspendedScrolls = scrolls.filter { seen.insert(ObjectIdentifier($0)).inserted }
+                    .map { ($0, $0.isScrollEnabled) }
+                suspendedScrolls.forEach { $0.view.isScrollEnabled = false }
                 pinchSnapshot = parent.visible
                 gestureWidth = max(1, width)
                 anchor = location.x / gestureWidth

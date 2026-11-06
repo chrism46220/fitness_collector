@@ -57,7 +57,8 @@ struct ActivityTrendsView<SelectionSummary: View>: View {
     var showsEmptyRangeCharts = false
     var emptyRangeMessage = "No workouts in this range."
     @ViewBuilder let selectionSummary: (WorkoutRow, String, Double?) -> SelectionSummary
-    @State private var chartRange: ChartRange = .thirty
+    @State private var chartRange: ChartRange = .all
+    @State private var screenIsActive = false
     @State private var selectedWorkout: WorkoutRow?
     @State private var viewport: ChartViewportState?
     // Keep all empty panels stable across body updates and gestures.
@@ -187,6 +188,18 @@ struct ActivityTrendsView<SelectionSummary: View>: View {
                 }
             }
         }
+        .background {
+            ChartPlotGestures(
+                visible: visibleDateRange, bounds: viewportContext.extent,
+                interactionID: "\(category.rawValue)-\(chartRange.rawValue)",
+                isScreenWide: true,
+                isEnabled: screenIsActive && selectedWorkout == nil && !workouts.isEmpty,
+                onReset: {}, onTap: { _ in }
+            )
+            .allowsHitTesting(false)
+        }
+        .onAppear { screenIsActive = true }
+        .onDisappear { screenIsActive = false }
         .onChange(of: viewportContext, initial: true) { _, next in
             var state = viewport ?? ChartViewportState(context: next)
             state.reconcile(next)

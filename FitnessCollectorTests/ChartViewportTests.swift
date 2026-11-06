@@ -123,17 +123,30 @@ final class ChartViewportTests: XCTestCase {
         assertRange(state.visible, 0, 7)
     }
 
-    func testAllCategoriesStartWithScrollableRecentDetailWithoutToggle() {
+    func testAllCategoriesStartWithFullHistoryForAll() {
         let dates = (0...100).map { date(Double($0)) }
         for category in ["running", "lifting", "tennis", "other"] {
             let ctx = ChartViewportContext(category: category, preset: "All",
                                            extent: range(0, 100), activityDates: dates)
-            let state = ChartViewportState(context: ctx)
-            assertRange(state.visible, 97, 100)
-            XCTAssertTrue(ChartViewport.isZoomed(state.visible, in: ctx.extent))
-            let dragged = ChartViewport.pan(state.visible, in: ctx.extent, translation: 280, width: 280)
-            assertRange(dragged, 94, 97)
+            var state = ChartViewportState(context: ctx)
+            assertRange(state.visible, 0, 100)
+            XCTAssertFalse(ChartViewport.isZoomed(state.visible, in: ctx.extent))
+            state.visible = ChartViewport.zoom(state.visible, in: ctx.extent, scale: 2, anchor: 0.5)
+            assertRange(state.visible, 25, 75)
+            state.reset()
+            assertRange(state.visible, 0, 100)
         }
+    }
+
+    func testReturningToAllRestoresFullHistoryAndLoadingExpandsIt() {
+        var state = ChartViewportState(context: context("30D", extent: range(70, 100)))
+        let dates = (0...100).map { date(Double($0)) }
+        state.reconcile(ChartViewportContext(category: "running", preset: "All",
+                                             extent: range(0, 100), activityDates: dates))
+        assertRange(state.visible, 0, 100)
+        state.reconcile(ChartViewportContext(category: "running", preset: "All",
+                                             extent: range(-100, 100), activityDates: [date(-100)] + dates))
+        assertRange(state.visible, -100, 100)
     }
 
     func testPresetChangesStartWithScrollableDetailAndSparseDataStaysUsable() {

@@ -76,15 +76,21 @@ struct ChartViewportState {
     var context: ChartViewportContext
     var visible: ClosedRange<Date>
 
+    private static func initialRange(for context: ChartViewportContext) -> ClosedRange<Date> {
+        // “All” means the complete history, not a recent-detail window.
+        context.preset == "All" ? context.extent
+            : ChartViewport.recentDetail(in: context.extent, dates: context.activityDates, width: 280)
+    }
+
     init(context: ChartViewportContext) {
         self.context = context
-        visible = ChartViewport.recentDetail(in: context.extent, dates: context.activityDates, width: 280)
+        visible = Self.initialRange(for: context)
     }
 
     mutating func reconcile(_ next: ChartViewportContext) {
         guard next != context else { return }
         if next.category != context.category || next.preset != context.preset || !ChartViewport.isZoomed(visible, in: context.extent) {
-            visible = ChartViewport.recentDetail(in: next.extent, dates: next.activityDates, width: 280)
+            visible = Self.initialRange(for: next)
         } else {
             visible = ChartViewport.clamp(visible, to: next.extent)
         }

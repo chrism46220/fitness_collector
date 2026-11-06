@@ -13,6 +13,7 @@ final class ChartGestureIntegrationTests: XCTestCase {
         let scroll = UIScrollView(frame: window.bounds)
         scroll.contentSize = CGSize(width: 400, height: 1600)
         window.addSubview(scroll)
+        window.isHidden = false
         let probe = ChartPlotGestures.PlotProbe(frame: CGRect(x: 60, y: 100, width: 280, height: 180))
         probe.isUserInteractionEnabled = false
         scroll.addSubview(probe)
@@ -284,6 +285,106 @@ final class ChartGestureIntegrationTests: XCTestCase {
         coordinator.detach()
         XCTAssertTrue(scroll.isScrollEnabled)
         XCTAssertTrue(second.pan.isEnabled)
+    }
+
+    private func screen(in window: UIWindow, matching plot: ChartPlotGestures.Coordinator)
+        -> (ChartPlotGestures.PlotProbe, ChartPlotGestures.Coordinator) {
+        let probe = ChartPlotGestures.PlotProbe(frame: window.bounds)
+        probe.isUserInteractionEnabled = false
+        window.addSubview(probe)
+        var bridge = plot.parent
+        bridge.isScreenWide = true
+        bridge.pinchRegion = nil
+        let coordinator = ChartPlotGestures.Coordinator(bridge)
+        coordinator.attach(to: probe)
+        return (probe, coordinator)
+    }
+
+    func testScreenPinchAddsGapsHeadingsAndRowsWithoutAddingTapOrPanTargets() {
+        let (window, scroll, _, first) = fixture()
+        let (_, second) = sibling(in: scroll, matching: first)
+        let (_, screen) = screen(in: window, matching: first)
+        defer { screen.detach(); second.detach(); first.detach(); window.isHidden = true }
+        XCTAssertTrue(screen.host === window)
+        XCTAssertEqual(screen.recognizers.count, 1)
+        XCTAssertTrue(screen.pinch.view === window)
+        XCTAssertNil(screen.pan.view)
+        XCTAssertNil(screen.singleTap.view)
+        XCTAssertFalse(first.acceptsPinchTouch(at: CGPoint(x: 20, y: 50), in: window),
+                       "Plot recognizers must not start tracking screen-only touches")
+        XCTAssertTrue(screen.acceptsPinchTouch(at: CGPoint(x: 20, y: 50), in: window))
+        for points in [[CGPoint(x: 20, y: 50), CGPoint(x: 380, y: 350)],
+                       [CGPoint(x: 200, y: 190), CGPoint(x: 20, y: 350)],
+                       [CGPoint(x: 60, y: 650), CGPoint(x: 340, y: 740)]] {
+            for order in [points, points.reversed().map { $0 }] {
+                XCTAssertTrue(screen.ownsPinch(at: order, in: window))
+                XCTAssertFalse(first.ownsPinch(at: order, in: window))
+                XCTAssertFalse(second.ownsPinch(at: order, in: window))
+            }
+        }
+        let charts = [CGPoint(x: 150, y: 190), CGPoint(x: 250, y: 490)]
+        XCTAssertTrue(first.ownsPinch(at: charts, in: window))
+        XCTAssertFalse(second.ownsPinch(at: charts, in: window))
+        XCTAssertFalse(screen.ownsPinch(at: charts, in: window), "No double application of zoom")
+        XCTAssertFalse(screen.ownsPinch(at: [CGPoint(x: -1, y: 100), CGPoint(x: 200, y: 300)], in: window))
+    }
+
+    func testScreenPinchWorksWhenChartCellsAreOffscreenAndRestoresScrolling() {
+        let (window, scroll, _, plot) = fixture()
+        var visible = bounds
+        plot.parent = ChartPlotGestures(visible: Binding(get: { visible }, set: { visible = $0 }),
+                                         bounds: bounds, onReset: {}, onTap: { _ in })
+        let (_, screen) = screen(in: window, matching: plot)
+        defer { screen.detach(); plot.detach(); window.isHidden = true }
+        let unrelated = UIScrollView(frame: CGRect(x: 0, y: 0, width: 20, height: 20))
+        window.addSubview(unrelated)
+        scroll.contentOffset.y = 700
+        XCTAssertTrue(screen.ownsPinch(at: [CGPoint(x: 100, y: 200), CGPoint(x: 300, y: 400)], in: window))
+        for ending: UIGestureRecognizer.State in [.ended, .cancelled, .failed] {
+            screen.handlePinch(state: .began, scale: 1, location: CGPoint(x: 200, y: 300), width: 400)
+            XCTAssertFalse(scroll.isScrollEnabled)
+            XCTAssertTrue(unrelated.isScrollEnabled, "Freeze only this Activity List, not every intersecting scroll view")
+            XCTAssertFalse(plot.pan.isEnabled)
+            screen.handlePinch(state: .changed, scale: 2, location: CGPoint(x: 200, y: 300), width: 400)
+            // SwiftUI updates during a pinch must not re-enable suspended chart pans.
+            plot.update(plot.parent)
+            XCTAssertFalse(plot.pan.isEnabled)
+            screen.handlePinch(state: ending, scale: 2, location: CGPoint(x: 200, y: 300), width: 400)
+            XCTAssertTrue(scroll.isScrollEnabled)
+            XCTAssertTrue(plot.pan.isEnabled)
+        }
+        XCTAssertLessThan(ChartViewport.duration(visible), ChartViewport.duration(bounds))
+    }
+
+    func testDisablingOrRemovingScreenProbeRestoresScrollAndStopsOwningTouches() {
+        let (window, scroll, _, plot) = fixture()
+        let (probe, screen) = screen(in: window, matching: plot)
+        defer { screen.detach(); plot.detach(); window.isHidden = true }
+        let points = [CGPoint(x: 20, y: 50), CGPoint(x: 380, y: 350)]
+        screen.handlePinch(state: .began, scale: 1, location: .zero, width: 400)
+        var disabled = screen.parent
+        disabled.isEnabled = false
+        screen.update(disabled)
+        XCTAssertTrue(scroll.isScrollEnabled)
+        XCTAssertTrue(plot.pan.isEnabled)
+        XCTAssertFalse(screen.pinch.isEnabled)
+        var changedWhileHidden = disabled
+        changedWhileHidden.interactionID = "changed-while-hidden"
+        screen.update(changedWhileHidden)
+        XCTAssertFalse(screen.pinch.isEnabled, "Context changes must not reactivate an invisible screen")
+        screen.update(disabled)
+        XCTAssertFalse(screen.ownsPinch(at: points, in: window))
+        XCTAssertFalse(plot.acceptsPinchTouch(at: points[0], in: window))
+        disabled.isEnabled = true
+        screen.update(disabled)
+        XCTAssertTrue(screen.ownsPinch(at: points, in: window))
+        probe.isHidden = true
+        XCTAssertFalse(screen.ownsPinch(at: points, in: window))
+        probe.isHidden = false
+        screen.handlePinch(state: .began, scale: 1, location: .zero, width: 400)
+        screen.detach()
+        XCTAssertTrue(scroll.isScrollEnabled)
+        XCTAssertTrue(plot.pan.isEnabled)
     }
 
     func testDismantleRemovesOnlyChartRecognizersAndReattachDoesNotAccumulate() {
